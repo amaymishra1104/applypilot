@@ -8,8 +8,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 import ai_service
-from application_engine import (add_event, count_sent_today, duplicate_application_exists,
-                                email_is_valid, get_settings, normalize, send_application)
+from application_engine import (add_event, append_signature, count_sent_today,
+                                duplicate_application_exists, email_is_valid, get_allowed_links,
+                                get_settings, normalize, send_application)
 from db import db, utc_now_iso, parse_iso
 from deps import get_current_user, get_owned
 from storage import get_object
@@ -100,6 +101,10 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
 
     settings = await get_settings(uid)
     company_doc = await db.companies.find_one({"user_id": uid, "name": company_name.strip()}, {"_id": 0}) if company_name else None
+    prof_settings = settings.get("profile") or {}
+    allowed_links = get_allowed_links(prof_settings)
+    candidate_name = prof_settings.get("full_name") or user.get("name", "")
+
     context = {
         "hr_name": (hr_contact or {}).get("hr_name", ""),
         "hr_email": hr_email,
@@ -115,11 +120,14 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
         "matched_skills": match.get("matched_skills", []),
         "resume_text": version.get("resume_text", ""),
         "tone": settings.get("email_tone", "professional"),
-        "candidate_name": user.get("name", ""),
+        "candidate_name": candidate_name,
+        "allowed_links": allowed_links,
     }
     email = await ai_service.generate_application_email(context, settings.get("ai_model"))
     if not email or not email.get("body"):
         raise HTTPException(status_code=502, detail="AI could not generate the email - try again")
+
+    body_text = append_signature(email.get("body", ""), prof_settings)
 
     mode = settings.get("autopilot", {}).get("mode", "approval")
     autop = settings.get("autopilot", {})
@@ -154,7 +162,7 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
         "attachment_size": version.get("size", 0),
         "match_score": score,
         "subject": email.get("subject", f"Application for {opp.get('job_title', '')}"),
-        "body_text": email.get("body", ""),
+        "body_text": body_text,
         "status": status,
         "retries": 0,
         "sent_at": None,

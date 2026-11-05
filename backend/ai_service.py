@@ -126,6 +126,11 @@ async def generate_application_email(context: dict, model: str | None = None) ->
         "You are an expert career coach who writes job application emails. The emails must sound natural, "
         "professional, concise and genuinely human - never generic or copy-paste. " + _NO_FABRICATION
     )
+    allowed_links = context.get("allowed_links") or []
+    links_clause = ("\nAUTHORIZED CANDIDATE LINKS (only these links may be referenced if relevant; do NOT invent any other links or URLs):\n"
+                    + "\n".join(allowed_links) if allowed_links else "\nAUTHORIZED CANDIDATE LINKS: None. Do NOT include any web links or URLs.")
+    feedback_clause = f"\nREVISION FEEDBACK: {context['feedback']}\n" if context.get("feedback") else ""
+
     prompt = (
         "Write a job application email for the candidate.\n\n"
         f"TO: {context.get('hr_name') or 'Hiring Team'}{(' (' + context['hr_email'] + ')') if context.get('hr_email') else ''}\n"
@@ -139,14 +144,23 @@ async def generate_application_email(context: dict, model: str | None = None) ->
         f"CANDIDATE EXPERIENCE: {context.get('experience_required', '')}\n"
         f"CANDIDATE NOTES: {context.get('role_notes', '')[:500]}\n"
         f"MATCHED SKILLS FOR THIS JOB: {', '.join(context.get('matched_skills', []))}\n"
-        f"CANDIDATE RESUME CONTENT (the ONLY source of facts about the candidate):\n{context.get('resume_text', '')[:4500]}\n\n"
+        f"CANDIDATE RESUME CONTENT (the ONLY source of facts about the candidate):\n{context.get('resume_text', '')[:8000]}\n\n"
         f"TONE: {context.get('tone', 'professional')}\n"
-        f"CANDIDATE NAME (for signature): {context.get('candidate_name', '')}\n\n"
-        "Requirements: a specific subject line mentioning the role; a proper greeting using the HR name if available; "
-        "1-2 sentence introduction stating the role applied for; 1 short paragraph highlighting ONLY resume-backed "
-        "projects/skills that match THIS job's requirements; a clear application intent sentence; professional closing "
-        "with candidate name. Keep the whole email under 180 words. Do not use placeholder text like [Project] - "
-        "only reference what exists in the resume content above.\n\n"
+        f"CANDIDATE NAME: {context.get('candidate_name', '')}\n"
+        f"{links_clause}\n"
+        f"{feedback_clause}\n"
+        "Requirements:\n"
+        "- A specific, non-empty subject line mentioning the target role.\n"
+        "- A proper greeting using the HR name if provided (e.g. 'Dear Sarah,'). NEVER use 'Hiring Manager' when an HR contact name is given.\n"
+        "- Vary your opening line across emails - do NOT always start with 'I am writing to express my interest in...' or 'I hope this email finds you well'. Use a direct, compelling opening tailored to the specific role and company.\n"
+        "- 1-2 sentence introduction stating the role applied for.\n"
+        "- 1 short paragraph highlighting ONLY resume-backed projects/skills that directly match THIS job's requirements.\n"
+        "- A clear application intent sentence.\n"
+        "- A professional closing sign-off line (e.g. 'Best regards,').\n"
+        "- Write ONLY the email body and closing line. Do NOT write a signature block, phone number, or social links at the end - the signature block is appended automatically server-side.\n"
+        "- Do NOT include any placeholder text like [Company Name], {Role}, or brackets of any kind. State actual facts.\n"
+        "- Do NOT include any URL or link that is not listed in AUTHORIZED CANDIDATE LINKS above.\n"
+        "- Keep the generated body under 180 words.\n\n"
         'Return JSON: {"subject": str, "body": str (plain text, \\n for line breaks)}.'
     )
     return await _ask_json(system, prompt, model)

@@ -4,6 +4,7 @@
 import asyncio
 from contextlib import suppress
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -55,6 +56,13 @@ async def get_settings(user_id: str) -> dict:
     DEFAULTS = {
         "ai_model": "gpt-5.4",
         "email_tone": "professional",
+        "profile": {
+            "full_name": "",
+            "phone": "",
+            "github": "",
+            "linkedin": "",
+            "portfolio": "",
+        },
         "autopilot": {
             "enabled": False, "mode": "approval", "max_per_day": 10,
             "min_delay_minutes": 30, "max_retries": 2, "min_match_score": 60, "paused": False,
@@ -68,10 +76,56 @@ async def get_settings(user_id: str) -> dict:
     doc = await db.app_settings.find_one({"user_id": user_id}, {"_id": 0})
     if not doc:
         return DEFAULTS
-    for section in ("autopilot", "followups", "notifications", "interviews", "digest"):
+    for section in ("autopilot", "followups", "notifications", "interviews", "digest", "profile"):
         if isinstance(doc.get(section), dict):
             doc[section] = {**DEFAULTS[section], **doc[section]}
     return {**DEFAULTS, **doc}
+
+
+def format_signature(profile: dict | None) -> str:
+    if not profile:
+        return ""
+    lines = []
+    full_name = (profile.get("full_name") or "").strip()
+    if full_name:
+        lines.append(full_name)
+    phone = (profile.get("phone") or "").strip()
+    if phone:
+        lines.append(phone)
+    links = []
+    for key in ("linkedin", "github", "portfolio"):
+        val = (profile.get(key) or "").strip()
+        if val:
+            links.append(val)
+    if links:
+        lines.append(" | ".join(links))
+    return "\n".join(lines).strip()
+
+
+def get_allowed_links(profile: dict | None) -> list[str]:
+    if not profile:
+        return []
+    allowed = []
+    for key in ("linkedin", "github", "portfolio"):
+        val = (profile.get(key) or "").strip()
+        if val:
+            allowed.append(val)
+    return allowed
+
+
+def append_signature(body: str, profile: dict | None) -> str:
+    sig = format_signature(profile)
+    if not sig:
+        return (body or "").strip()
+    clean_body = (body or "").rstrip()
+    if not clean_body:
+        return sig
+    if sig in clean_body:
+        return clean_body
+    name = (profile or {}).get("full_name", "").strip()
+    if name and clean_body.endswith(name):
+        clean_body = clean_body[:-len(name)].rstrip()
+    return f"{clean_body}\n\n{sig}".strip()
 
 
 def is_dry_run() -> bool:

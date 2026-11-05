@@ -5,6 +5,7 @@ import time
 
 # Ensure DB_NAME points to applypilot_test for testing
 os.environ["DB_NAME"] = "applypilot_test"
+os.environ["DRY_RUN"] = "false"
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest

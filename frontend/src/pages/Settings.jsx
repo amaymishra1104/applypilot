@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Bell, Bot, Brain, CalendarClock, Mail, Save, Shield, Timer } from "lucide-react";
+import { Bell, Bot, Brain, CalendarClock, Mail, Save, Shield, Timer, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -67,6 +67,7 @@ export default function Settings() {
       const res = await api.put("/settings", {
         ai_model: settings.ai_model,
         email_tone: settings.email_tone,
+        profile: settings.profile || {},
         autopilot: settings.autopilot,
         followups: settings.followups,
         interviews: settings.interviews,
@@ -119,6 +120,45 @@ export default function Settings() {
                 </SelectContent>
               </Select>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="settings-profile-card">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base"><User className="h-4 w-4 text-primary" /> Profile & signature block</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Full name</Label>
+                <Input value={settings.profile?.full_name || ""} onChange={(e) => set("profile", "full_name", e.target.value)} placeholder="Jane Doe" data-testid="profile-full-name" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Phone number</Label>
+                <Input value={settings.profile?.phone || ""} onChange={(e) => set("profile", "phone", e.target.value)} placeholder="+1 (555) 234-5678" data-testid="profile-phone" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>LinkedIn URL</Label>
+                <Input value={settings.profile?.linkedin || ""} onChange={(e) => set("profile", "linkedin", e.target.value)} placeholder="https://linkedin.com/in/janedoe" data-testid="profile-linkedin" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>GitHub URL</Label>
+                <Input value={settings.profile?.github || ""} onChange={(e) => set("profile", "github", e.target.value)} placeholder="https://github.com/janedoe" data-testid="profile-github" />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Portfolio URL</Label>
+                <Input value={settings.profile?.portfolio || ""} onChange={(e) => set("profile", "portfolio", e.target.value)} placeholder="https://janedoe.dev" data-testid="profile-portfolio" />
+              </div>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+              <p className="font-medium text-foreground mb-1">Signature preview (appended server-side):</p>
+              <pre className="whitespace-pre-wrap font-mono text-muted-foreground">{
+                [
+                  settings.profile?.full_name?.trim(),
+                  settings.profile?.phone?.trim(),
+                  [settings.profile?.linkedin?.trim(), settings.profile?.github?.trim(), settings.profile?.portfolio?.trim()].filter(Boolean).join(" | ")
+                ].filter(Boolean).join("\n") || "No signature details entered yet"
+              }</pre>
+            </div>
+            <p className="text-xs text-muted-foreground">The AI generator is restricted to referencing only these authorized links. The signature block is deterministically appended after the generated message body.</p>
           </CardContent>
         </Card>
 

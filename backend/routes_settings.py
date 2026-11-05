@@ -48,9 +48,18 @@ class DigestIn(BaseModel):
     timezone: Optional[str] = None
 
 
+class ProfileIn(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    github: Optional[str] = None
+    linkedin: Optional[str] = None
+    portfolio: Optional[str] = None
+
+
 class SettingsIn(BaseModel):
     ai_model: Optional[str] = None
     email_tone: Optional[str] = None
+    profile: Optional[ProfileIn] = None
     autopilot: Optional[AutopilotIn] = None
     followups: Optional[FollowupsIn] = None
     interviews: Optional[InterviewsIn] = None
@@ -89,7 +98,8 @@ async def write_settings(body: SettingsIn, user: dict = Depends(get_current_user
             raise HTTPException(status_code=400, detail="Unknown tone")
         updates["email_tone"] = data["email_tone"]
     for section, cls in (("autopilot", AutopilotIn), ("followups", FollowupsIn),
-                         ("interviews", InterviewsIn), ("notifications", NotificationsIn), ("digest", DigestIn)):
+                         ("interviews", InterviewsIn), ("notifications", NotificationsIn),
+                         ("digest", DigestIn), ("profile", ProfileIn)):
         incoming = data.get(section)
         if incoming:
             merged = {**settings[section], **{k: v for k, v in incoming.items() if v is not None}}
@@ -101,7 +111,7 @@ async def write_settings(body: SettingsIn, user: dict = Depends(get_current_user
     if updates:
         updates["updated_at"] = utc_now_iso()
         await db.app_settings.update_one({"user_id": user["user_id"]}, {"$set": updates}, upsert=True)
-    return await get_settings(user["user_id"])
+    return await read_settings(user)
 
 
 @router.post("/settings/google-oauth")
