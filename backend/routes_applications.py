@@ -350,12 +350,12 @@ async def bulk_delete(body: BulkActionIn, user: dict = Depends(get_current_user)
     ids = body.application_ids or []
     if not ids:
         return {"ok": True, "count": 0}
+    delete_res = await db.job_applications.delete_many(
+        {"user_id": uid, "id": {"$in": ids}, "status": {"$ne": "sent"}}
+    )
     cancel_res = await db.job_applications.update_many(
         {"user_id": uid, "id": {"$in": ids}, "status": "sent"},
         {"$set": {"status": "cancelled", "updated_at": utc_now_iso()}}
-    )
-    delete_res = await db.job_applications.delete_many(
-        {"user_id": uid, "id": {"$in": ids}, "status": {"$ne": "sent"}}
     )
     total = cancel_res.modified_count + delete_res.deleted_count
     return {"ok": True, "count": total}

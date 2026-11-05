@@ -510,7 +510,3 @@ export default function HRContacts() {
     </div>
   );
 }
-      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={() => load(search)} />
-    </div>
-  );
-}
