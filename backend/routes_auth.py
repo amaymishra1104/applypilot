@@ -42,8 +42,14 @@ async def login(body: LoginIn, response: Response):
         await record_login_failure()
         raise HTTPException(status_code=400, detail="Email and password are required")
 
-    # Single-user: only the owner email is valid
-    if input_email != owner_email or not verify_password(input_password, owner_pwd_hash):
+    # Single-user: owner email, default owner, or connected Gmail email
+    conn = await db.gmail_connections.find_one({"user_id": OWNER_USER_ID})
+    connected_email = (conn.get("email") or "").strip().lower() if conn else ""
+    valid_emails = {owner_email, "owner@applypilot.dev"}
+    if connected_email:
+        valid_emails.add(connected_email)
+
+    if input_email not in valid_emails or not verify_password(input_password, owner_pwd_hash):
         await record_login_failure()
         logger.warning("Failed login attempt for email: %s", input_email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
