@@ -475,38 +475,6 @@ async def get_bulk_job(job_id: str, user: dict = Depends(get_current_user)):
     return job
 
 
-@router.post("/contacts")
-async def create_contact(body: ContactIn, user: dict = Depends(get_current_user)):
-    if not EMAIL_RE.match(norm_email(body.hr_email)):
-        raise HTTPException(status_code=400, detail="Invalid email address")
-    if await find_duplicate(user["user_id"], body.hr_email):
-        raise HTTPException(status_code=409, detail="A contact with this email already exists")
-    doc = build_doc(user["user_id"], body.model_dump())
-    await db.hr_contacts.insert_one(doc.copy())
-    return doc
-
-
-@router.put("/contacts/{contact_id}")
-async def update_contact(contact_id: str, body: ContactIn, user: dict = Depends(get_current_user)):
-    await get_owned("hr_contacts", contact_id, user["user_id"])
-    if not EMAIL_RE.match(norm_email(body.hr_email)):
-        raise HTTPException(status_code=400, detail="Invalid email address")
-    dup = await find_duplicate(user["user_id"], body.hr_email)
-    if dup and dup["id"] != contact_id:
-        raise HTTPException(status_code=409, detail="A contact with this email already exists")
-    doc = build_doc(user["user_id"], body.model_dump())
-    doc["id"] = contact_id
-    await db.hr_contacts.replace_one({"id": contact_id, "user_id": user["user_id"]}, doc)
-    return doc
-
-
-@router.delete("/contacts/{contact_id}")
-async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)):
-    await get_owned("hr_contacts", contact_id, user["user_id"])
-    await db.hr_contacts.delete_one({"id": contact_id, "user_id": user["user_id"]})
-    return {"ok": True}
-
-
 def _normalize_headers(rows: list[dict]) -> list[dict]:
     mapped = []
     for row in rows:
@@ -569,3 +537,35 @@ async def import_contacts(file: UploadFile = File(...), user: dict = Depends(get
         await db.hr_contacts.insert_one(build_doc(user["user_id"], row).copy())
         result["imported"] += 1
     return result
+
+
+@router.post("/contacts")
+async def create_contact(body: ContactIn, user: dict = Depends(get_current_user)):
+    if not EMAIL_RE.match(norm_email(body.hr_email)):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if await find_duplicate(user["user_id"], body.hr_email):
+        raise HTTPException(status_code=409, detail="A contact with this email already exists")
+    doc = build_doc(user["user_id"], body.model_dump())
+    await db.hr_contacts.insert_one(doc.copy())
+    return doc
+
+
+@router.put("/contacts/{contact_id}")
+async def update_contact(contact_id: str, body: ContactIn, user: dict = Depends(get_current_user)):
+    await get_owned("hr_contacts", contact_id, user["user_id"])
+    if not EMAIL_RE.match(norm_email(body.hr_email)):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    dup = await find_duplicate(user["user_id"], body.hr_email)
+    if dup and dup["id"] != contact_id:
+        raise HTTPException(status_code=409, detail="A contact with this email already exists")
+    doc = build_doc(user["user_id"], body.model_dump())
+    doc["id"] = contact_id
+    await db.hr_contacts.replace_one({"id": contact_id, "user_id": user["user_id"]}, doc)
+    return doc
+
+
+@router.delete("/contacts/{contact_id}")
+async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)):
+    await get_owned("hr_contacts", contact_id, user["user_id"])
+    await db.hr_contacts.delete_one({"id": contact_id, "user_id": user["user_id"]})
+    return {"ok": True}

@@ -218,7 +218,6 @@ async def queue_stats(user: dict = Depends(get_current_user)):
 
 
 @router.delete("/applications/dry-run")
-@router.post("/applications/clear-dry-run")
 async def clear_dry_run(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
     dry_apps = await db.job_applications.find({"user_id": uid, "dry_run": True}, {"id": 1}).to_list(1000)
@@ -228,6 +227,38 @@ async def clear_dry_run(user: dict = Depends(get_current_user)):
         {"user_id": uid, "$or": [{"type": "dry_run_send"}, {"application_id": {"$in": app_ids}}]}
     )
     return {"ok": True, "deleted_applications": res_apps.deleted_count, "deleted_events": res_events.deleted_count}
+
+
+@router.post("/applications/bulk-approve")
+async def bulk_approve(body: BulkActionIn, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    ids = body.application_ids or []
+    if not ids:
+        return {"ok": True, "count": 0}
+    result = await db.job_applications.update_many(
+        {"user_id": uid, "id": {"$in": ids}, "status": {"$in": ["draft", "awaiting_approval"]}},
+        {"$set": {"status": "approved", "updated_at": utc_now_iso()}}
+    )
+    for app_id in ids:
+        await add_event(uid, app_id, "approved", "Email approved in bulk")
+    return {"ok": True, "count": result.modified_count}
+
+
+@router.post("/applications/bulk-delete")
+async def bulk_delete(body: BulkActionIn, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    ids = body.application_ids or []
+    if not ids:
+        return {"ok": True, "count": 0}
+    delete_res = await db.job_applications.delete_many(
+        {"user_id": uid, "id": {"$in": ids}, "status": {"$ne": "sent"}}
+    )
+    cancel_res = await db.job_applications.update_many(
+        {"user_id": uid, "id": {"$in": ids}, "status": "sent"},
+        {"$set": {"status": "cancelled", "updated_at": utc_now_iso()}}
+    )
+    total = cancel_res.modified_count + delete_res.deleted_count
+    return {"ok": True, "count": total}
 
 
 @router.get("/applications/{app_id}")
@@ -327,38 +358,6 @@ async def delete_application(app_id: str, user: dict = Depends(get_current_user)
         return {"ok": True, "cancelled": True}
     await db.job_applications.delete_one({"id": app_id, "user_id": user["user_id"]})
     return {"ok": True}
-
-
-@router.post("/applications/bulk-approve")
-async def bulk_approve(body: BulkActionIn, user: dict = Depends(get_current_user)):
-    uid = user["user_id"]
-    ids = body.application_ids or []
-    if not ids:
-        return {"ok": True, "count": 0}
-    result = await db.job_applications.update_many(
-        {"user_id": uid, "id": {"$in": ids}, "status": {"$in": ["draft", "awaiting_approval"]}},
-        {"$set": {"status": "approved", "updated_at": utc_now_iso()}}
-    )
-    for app_id in ids:
-        await add_event(uid, app_id, "approved", "Email approved in bulk")
-    return {"ok": True, "count": result.modified_count}
-
-
-@router.post("/applications/bulk-delete")
-async def bulk_delete(body: BulkActionIn, user: dict = Depends(get_current_user)):
-    uid = user["user_id"]
-    ids = body.application_ids or []
-    if not ids:
-        return {"ok": True, "count": 0}
-    delete_res = await db.job_applications.delete_many(
-        {"user_id": uid, "id": {"$in": ids}, "status": {"$ne": "sent"}}
-    )
-    cancel_res = await db.job_applications.update_many(
-        {"user_id": uid, "id": {"$in": ids}, "status": "sent"},
-        {"$set": {"status": "cancelled", "updated_at": utc_now_iso()}}
-    )
-    total = cancel_res.modified_count + delete_res.deleted_count
-    return {"ok": True, "count": total}
 
 
 @router.get("/applications/{app_id}/attachment")
