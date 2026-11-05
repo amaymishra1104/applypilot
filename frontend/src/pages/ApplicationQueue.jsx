@@ -5,6 +5,7 @@ import { api, downloadFile } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,6 +55,8 @@ export default function ApplicationQueue({ onChanged }) {
   const [tab, setTab] = useState("all");
   const [editFor, setEditFor] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -101,11 +104,62 @@ export default function ApplicationQueue({ onChanged }) {
     } catch { toast.error("Could not delete"); }
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkApprove = async () => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post("/applications/bulk-approve", { application_ids: Array.from(selectedIds) });
+      toast.success(`Approved ${res.data.count} application${res.data.count === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      load(); onChanged && onChanged();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk approve failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkDelete = async () => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post("/applications/bulk-delete", { application_ids: Array.from(selectedIds) });
+      toast.success(`Deleted / cancelled ${res.data.count} application${res.data.count === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      load(); onChanged && onChanged();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   if (apps === null) return <Loading />;
 
   const filtered = tab === "all" ? apps : apps.filter((a) => a.status === tab);
   const sentToday = stats?.sent_today || 0;
   const dailyLimit = autopilot.max_per_day || 10;
+  const visibleIds = filtered.map((a) => a.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  const toggleVisible = () => {
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleIds));
+    }
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(apps.map((a) => a.id)));
+  };
 
   return (
     <div>
@@ -166,7 +220,7 @@ export default function ApplicationQueue({ onChanged }) {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="mb-6">
+      <Tabs value={tab} onValueChange={setTab} className="mb-4">
         <TabsList className="flex-wrap h-auto" data-testid="queue-tabs">
           <TabsTrigger value="all">All ({apps.length})</TabsTrigger>
           <TabsTrigger value="draft">Drafts</TabsTrigger>
@@ -179,6 +233,33 @@ export default function ApplicationQueue({ onChanged }) {
         </TabsList>
       </Tabs>
 
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={toggleVisible} data-testid="select-visible-apps-button">
+            {allVisibleSelected ? "Deselect visible" : `Select visible (${filtered.length})`}
+          </Button>
+          <Button variant="outline" size="sm" onClick={selectAll} data-testid="select-all-apps-button">
+            Select all ({apps.length})
+          </Button>
+          {selectedIds.size > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+              Clear ({selectedIds.size})
+            </Button>
+          )}
+        </div>
+
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={bulkApprove} disabled={bulkBusy} data-testid="bulk-approve-button">
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Approve selected ({selectedIds.size})
+            </Button>
+            <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" onClick={bulkDelete} disabled={bulkBusy} data-testid="bulk-delete-button">
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete selected ({selectedIds.size})
+            </Button>
+          </div>
+        )}
+      </div>
+
       {filtered.length === 0 ? (
         <EmptyState
           icon={Send}
@@ -188,50 +269,60 @@ export default function ApplicationQueue({ onChanged }) {
         />
       ) : (
         <div className="space-y-4" data-testid="queue-list">
-          {filtered.map((app) => (
-            <Card key={app.id} data-testid="queue-application-card">
-              <CardContent className="p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-display font-semibold">{app.company}</h3>
-                      <StatusBadge status={app.status} />
-                      <ScoreBadge score={app.match_score} />
+          {filtered.map((app) => {
+            const isSelected = selectedIds.has(app.id);
+            return (
+              <Card key={app.id} data-testid="queue-application-card" className={isSelected ? "border-primary/50 bg-primary/[0.02]" : ""}>
+                <CardContent className="p-5">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="pt-1">
+                        <Checkbox checked={isSelected} onCheckedChange={() => toggleSelect(app.id)} data-testid={`select-app-${app.id}`} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-display font-semibold">{app.company}</h3>
+                          <StatusBadge status={app.status} />
+                          <ScoreBadge score={app.match_score} />
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {app.job_title} · {app.channel === "board" ? `Job board: ${app.board}` : app.hr_email} · Resume: {app.resume_name} (v{app.resume_version_no})
+                        </p>
+                        <div className="mt-3 rounded-lg border bg-muted/20 p-3">
+                          <p className="text-xs font-semibold text-foreground">{app.subject}</p>
+                          <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground font-mono">{app.body_text}</p>
+                        </div>
+                        {app.error && <p className="mt-2 text-xs text-red-500" data-testid="application-error">{app.error}</p>}
+                        {app.sent_at && <p className="mt-2 text-xs text-muted-foreground">Sent {new Date(app.sent_at).toLocaleString()} from {app.gmail_email}</p>}
+                      </div>
                     </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {app.job_title} · {app.channel === "board" ? `Job board: ${app.board}` : app.hr_email} · Resume: {app.resume_name} (v{app.resume_version_no})
-                    </p>
-                    <p className="mt-3 text-sm font-medium">{app.subject}</p>
-                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-muted-foreground">{app.body_text}</p>
-                    {app.error && <p className="mt-2 text-xs text-red-500" data-testid="application-error">{app.error}</p>}
-                    {app.sent_at && <p className="mt-2 text-xs text-muted-foreground">Sent {new Date(app.sent_at).toLocaleString()} from {app.gmail_email}</p>}
+                    <div className="flex flex-wrap gap-2 lg:flex-col lg:items-end">
+                      {(app.status === "awaiting_approval" || app.status === "draft") && (
+                        <Button size="sm" variant="outline" onClick={() => act(app, "approve")} disabled={busyId === app.id} data-testid={`approve-${app.id}`}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Approve</Button>
+                      )}
+                      {app.channel === "board" && app.job_url && (
+                        <Button size="sm" variant="outline" asChild data-testid={`open-job-${app.id}`}><a href={app.job_url} target="_blank" rel="noreferrer">Open job</a></Button>
+                      )}
+                      {app.status === "sending" && (
+                        <Button size="sm" variant="outline" disabled data-testid={`sending-${app.id}`}><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-amber-500" /> Sending...</Button>
+                      )}
+                      {app.channel !== "board" && ["draft", "awaiting_approval", "approved", "queued_auto"].includes(app.status) && (
+                        <Button size="sm" onClick={() => act(app, "send")} disabled={busyId === app.id} data-testid={`send-${app.id}`}><Send className="mr-1.5 h-3.5 w-3.5" /> Send now</Button>
+                      )}
+                      {["send_failed", "needs_attention"].includes(app.status) && (
+                        <Button size="sm" variant="outline" onClick={() => act(app, "retry")} disabled={busyId === app.id} data-testid={`retry-${app.id}`}><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry</Button>
+                      )}
+                      {!["sent", "sending", "cancelled"].includes(app.status) && (
+                        <Button size="sm" variant="outline" onClick={() => setEditFor(app)} data-testid={`edit-${app.id}`}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit</Button>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => downloadFile(`/applications/${app.id}/attachment`, app.attachment_filename || "resume.pdf")} data-testid={`attachment-${app.id}`}><Download className="mr-1.5 h-3.5 w-3.5" /> Attachment</Button>
+                      <Button size="sm" variant="ghost" className="text-red-500" onClick={() => remove(app)} data-testid={`delete-${app.id}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 lg:flex-col lg:items-end">
-                    {(app.status === "awaiting_approval" || app.status === "draft") && (
-                      <Button size="sm" variant="outline" onClick={() => act(app, "approve")} disabled={busyId === app.id} data-testid={`approve-${app.id}`}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Approve</Button>
-                    )}
-                    {app.channel === "board" && app.job_url && (
-                      <Button size="sm" variant="outline" asChild data-testid={`open-job-${app.id}`}><a href={app.job_url} target="_blank" rel="noreferrer">Open job</a></Button>
-                    )}
-                    {app.status === "sending" && (
-                      <Button size="sm" variant="outline" disabled data-testid={`sending-${app.id}`}><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-amber-500" /> Sending...</Button>
-                    )}
-                    {app.channel !== "board" && ["draft", "awaiting_approval", "approved", "queued_auto"].includes(app.status) && (
-                      <Button size="sm" onClick={() => act(app, "send")} disabled={busyId === app.id} data-testid={`send-${app.id}`}><Send className="mr-1.5 h-3.5 w-3.5" /> Send now</Button>
-                    )}
-                    {["send_failed", "needs_attention"].includes(app.status) && (
-                      <Button size="sm" variant="outline" onClick={() => act(app, "retry")} disabled={busyId === app.id} data-testid={`retry-${app.id}`}><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry</Button>
-                    )}
-                    {!["sent", "sending", "cancelled"].includes(app.status) && (
-                      <Button size="sm" variant="outline" onClick={() => setEditFor(app)} data-testid={`edit-${app.id}`}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit</Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => downloadFile(`/applications/${app.id}/attachment`, app.attachment_filename || "resume.pdf")} data-testid={`attachment-${app.id}`}><Download className="mr-1.5 h-3.5 w-3.5" /> Attachment</Button>
-                    <Button size="sm" variant="ghost" className="text-red-500" onClick={() => remove(app)} data-testid={`delete-${app.id}`}><Trash2 className="h-3.5 w-3.5" /></Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
