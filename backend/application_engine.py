@@ -194,6 +194,17 @@ def is_dry_run() -> bool:
     return val in ("true", "1", "yes", "on")
 
 
+async def get_profiles_with_resumes(user_id: str) -> list[dict]:
+    profiles = await db.role_profiles.find({"user_id": user_id}, {"_id": 0}).to_list(200)
+    if not profiles:
+        return []
+    versions = await db.resume_versions.find(
+        {"user_id": user_id, "is_deleted": {"$ne": True}, "active": True}, {"_id": 0}).to_list(300)
+    by_role = {v["role_profile_id"]: v for v in versions}
+    return [{**p, "resume_text": (by_role.get(p["id"]) or {}).get("resume_text", ""),
+             "active_resume": by_role.get(p["id"])} for p in profiles]
+
+
 async def count_sent_today(user_id: str) -> int:
     day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     return await db.job_applications.count_documents({
