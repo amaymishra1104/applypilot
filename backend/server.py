@@ -104,7 +104,8 @@ async def lifespan(app: FastAPI):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-        client.close()
+        if os.environ.get("DB_NAME") != "applypilot_test":
+            client.close()
 
 
 app = FastAPI(title="ApplyPilot API", lifespan=lifespan)

@@ -109,7 +109,7 @@ export default function Settings() {
                   {(settings.models_available || []).map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">Powered by the Emergent Universal LLM key - no API key of your own needed.</p>
+              <p className="text-xs text-muted-foreground">Configured via LLM_PROVIDER and LLM_MODEL in backend environment.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Default email tone</Label>
