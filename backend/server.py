@@ -119,6 +119,22 @@ async def startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
     asyncio.create_task(_init_storage())
     asyncio.create_task(_cleanup_oauth_states())
+    asyncio.create_task(resume_running_bulk_jobs())
+
+
+async def resume_running_bulk_jobs() -> list[str]:
+    """On app start, find bulk_jobs in 'running' and continue them without duplicating applications."""
+    resumed = []
+    try:
+        from routes_contacts import run_bulk_generation_job
+        running_jobs = await db.bulk_jobs.find({"status": "running"}).to_list(100)
+        for job in running_jobs:
+            logger.info("Resuming interrupted bulk job %s for user %s", job["id"], job["user_id"])
+            asyncio.create_task(run_bulk_generation_job(job["id"], job["user_id"]))
+            resumed.append(job["id"])
+    except Exception as exc:
+        logger.error("Failed to resume running bulk jobs: %s", exc)
+    return resumed
 
 
 async def _init_storage():

@@ -164,16 +164,34 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
     contact_ids = job.get("contact_ids") or []
     contacts = await db.hr_contacts.find({"user_id": user_id, "id": {"$in": contact_ids}}, {"_id": 0}).to_list(len(contact_ids))
     contact_map = {c["id"]: c for c in contacts}
-    target_contacts = [contact_map[cid] for cid in contact_ids if cid in contact_map]
-
-    match_cache = {}
-    sem = asyncio.Semaphore(3)
-    lock = asyncio.Lock()
 
     done = int(job.get("done", 0))
     failed = int(job.get("failed", 0))
     skipped = int(job.get("skipped", 0))
     errors = list(job.get("errors", []))
+    processed_ids = set(job.get("processed_ids", []))
+
+    target_contacts = [contact_map[cid] for cid in contact_ids if cid in contact_map and cid not in processed_ids]
+
+    if not target_contacts:
+        await db.bulk_jobs.update_one(
+            {"id": job_id},
+            {"$set": {
+                "status": "completed",
+                "done": done,
+                "failed": failed,
+                "skipped": skipped,
+                "errors": errors,
+                "processed_ids": list(processed_ids),
+                "completed_at": utc_now_iso(),
+                "updated_at": utc_now_iso(),
+            }}
+        )
+        return
+
+    match_cache = {}
+    sem = asyncio.Semaphore(3)
+    lock = asyncio.Lock()
 
     async def process_contact(contact: dict):
         nonlocal done, failed, skipped
@@ -182,20 +200,22 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         if not email or not email_is_valid(email):
             async with lock:
                 skipped += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": "Invalid or disposable email address"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
         if is_role_account(email):
             async with lock:
                 skipped += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"Role-account address ({email}) skipped"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
@@ -206,10 +226,11 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         if target_role and await duplicate_application_exists(user_id, email, target_role):
             async with lock:
                 skipped += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"Application already exists for role '{target_role}'"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
@@ -258,10 +279,11 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         if not active_resume:
             async with lock:
                 failed += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"No active resume for role profile '{matched_profile['title']}'"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
@@ -270,10 +292,11 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         if not target_role and await duplicate_application_exists(user_id, email, final_role_title):
             async with lock:
                 skipped += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"Application already exists for role '{final_role_title}'"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
@@ -339,10 +362,11 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         except Exception as exc:
             async with lock:
                 failed += 1
+                processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"Email generation failed: {exc}"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
 
@@ -396,9 +420,10 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
 
         async with lock:
             done += 1
+            processed_ids.add(contact["id"])
             await db.bulk_jobs.update_one(
                 {"id": job_id},
-                {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "updated_at": utc_now_iso()}}
+                {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
             )
 
     async def worker(c):
@@ -415,6 +440,7 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
             "failed": failed,
             "skipped": skipped,
             "errors": errors,
+            "processed_ids": list(processed_ids),
             "updated_at": utc_now_iso(),
             "completed_at": utc_now_iso(),
         }}
@@ -447,6 +473,7 @@ async def bulk_generate(body: BulkGenerateIn, user: dict = Depends(get_current_u
         "skipped": 0,
         "errors": [],
         "contact_ids": target_ids,
+        "processed_ids": [],
         "queue_for_auto": bool(body.queue_for_auto),
         "created_at": utc_now_iso(),
         "updated_at": utc_now_iso(),
