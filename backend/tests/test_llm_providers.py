@@ -15,6 +15,7 @@ from llm import (
     AnthropicProvider,
     BaseLLMProvider,
     GeminiProvider,
+    GroqProvider,
     OpenAIProvider,
     get_available_models,
     get_default_model,
@@ -82,6 +83,7 @@ async def test_gemini_provider_429_retry(monkeypatch):
 async def test_gemini_provider_unset_api_key_error(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
     provider = GeminiProvider()
 
     # Direct provider call raises clean RuntimeError
@@ -235,6 +237,42 @@ async def test_anthropic_provider_unset_api_key(monkeypatch):
     assert "ANTHROPIC_API_KEY is not set" in str(exc_info.value)
 
 
+@pytest.mark.asyncio
+async def test_groq_provider_success_structured_json(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "fake_groq_key")
+    provider = GroqProvider(backoff_base=0.01)
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = '{"subject": "Groq Application", "body": "Dear Team,\\n\\nApplication letter."}'
+    mock_completion = MagicMock(choices=[mock_choice])
+
+    client_instance = MagicMock()
+    client_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
+    provider._client = client_instance
+
+    result = await provider.generate_json(
+        system="System",
+        prompt="Prompt",
+        schema=ApplicationEmailDraft,
+    )
+
+    assert result is not None
+    assert result["subject"] == "Groq Application"
+    assert "Application letter." in result["body"]
+    assert client_instance.chat.completions.create.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_groq_provider_unset_api_key(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    provider = GroqProvider()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await provider.generate_text("System", "Prompt")
+    assert "GROQ_API_KEY is not set" in str(exc_info.value)
+
+
+
 def test_models_config_and_provider_switching(monkeypatch):
     # Gemini defaults
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
@@ -259,6 +297,14 @@ def test_models_config_and_provider_switching(monkeypatch):
     anthropic_models = get_available_models()
     assert "claude-sonnet-5-5" in anthropic_models
     assert "claude-haiku-5-5" in anthropic_models
+
+    # Groq selectable
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    assert get_default_model() == "openai/gpt-oss-120b"
+    groq_models = get_available_models()
+    assert "openai/gpt-oss-120b" in groq_models
+    assert "openai/gpt-oss-20b" in groq_models
 
 
 def test_tolerant_json_parser():

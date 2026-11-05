@@ -141,6 +141,7 @@ async def run_smoke_test(base_url: str | None = None):
         os.environ.get("GEMINI_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("GROQ_API_KEY")
     )
     if not has_llm_key:
         print("LLM Provider:  Simulated Mock (No LLM key configured in environment)")

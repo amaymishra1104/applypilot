@@ -4,11 +4,13 @@ from llm.base import BaseLLMProvider, parse_json_tolerant
 from llm.gemini import GeminiProvider
 from llm.openai import OpenAIProvider
 from llm.anthropic import AnthropicProvider
+from llm.groq import GroqProvider
 
 _PROVIDERS = {
     "gemini": GeminiProvider,
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
+    "groq": GroqProvider,
 }
 
 
@@ -35,6 +37,7 @@ __all__ = [
     "GeminiProvider",
     "OpenAIProvider",
     "AnthropicProvider",
+    "GroqProvider",
     "get_llm_provider",
     "get_available_models",
     "get_default_model",
