@@ -16,7 +16,7 @@ SUCCESS_STATUSES = {"replied", "interview", "offer"}
 async def dashboard(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
     apps = await db.job_applications.find(
-        {"user_id": uid}, {"_id": 0, "status": 1, "created_at": 1, "sent_at": 1, "company": 1}).to_list(5000)
+        {"user_id": uid, "dry_run": {"$ne": True}}, {"_id": 0, "status": 1, "created_at": 1, "sent_at": 1, "company": 1}).to_list(5000)
     status_counts = {}
     for a in apps:
         status_counts[a.get("status", "unknown")] = status_counts.get(a.get("status", "unknown"), 0) + 1

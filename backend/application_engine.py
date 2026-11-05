@@ -74,10 +74,16 @@ async def get_settings(user_id: str) -> dict:
     return {**DEFAULTS, **doc}
 
 
+def is_dry_run() -> bool:
+    val = (os.environ.get("DRY_RUN") or "true").strip().lower()
+    return val in ("true", "1", "yes", "on")
+
+
 async def count_sent_today(user_id: str) -> int:
     day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     return await db.job_applications.count_documents({
         "user_id": user_id, "status": "sent",
+        "dry_run": {"$ne": True},
         "sent_at": {"$gte": day_start.isoformat()},
     })
 
@@ -177,6 +183,28 @@ async def send_application(user_id: str, app_doc: dict, trigger: str = "manual",
             return await _handle_failure(f"Resume attachment unavailable: {exc}")
     else:
         return await _handle_failure("No resume attached to this application")
+
+    if is_dry_run():
+        sent_iso = utc_now_iso()
+        message_id = f"dry_run_{__import__('uuid').uuid4().hex[:12]}"
+        thread_id = f"thread_dry_{__import__('uuid').uuid4().hex[:12]}"
+        await db.job_applications.update_one(
+            {"id": app_doc["id"], "user_id": user_id},
+            {"$set": {
+                "status": "sent",
+                "sent_at": sent_iso,
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "gmail_email": conn["email"],
+                "error": None,
+                "retries": 0,
+                "dry_run": True,
+            }},
+        )
+        await add_event(user_id, app_doc["id"], "dry_run_send",
+                        f"[DRY RUN] Simulated send to {app_doc['hr_email']} via Gmail ({trigger})",
+                        {"company": app_doc.get("company", ""), "resume": app_doc.get("resume_name", ""), "dry_run": True})
+        return {"ok": True, "message_id": message_id, "dry_run": True}
 
     try:
         message_id, thread_id = await gmail_service.send_gmail_email(

@@ -173,8 +173,11 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
 
 
 @router.get("/applications")
-async def list_applications(status: str = "", search: str = "", user: dict = Depends(get_current_user)):
+async def list_applications(status: str = "", search: str = "", include_dry_run: bool = False,
+                            user: dict = Depends(get_current_user)):
     query = {"user_id": user["user_id"]}
+    if not include_dry_run:
+        query["dry_run"] = {"$ne": True}
     if status:
         query["status"] = status
     if search.strip():
@@ -189,11 +192,26 @@ async def queue_stats(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
     counts = {}
     for status in STATUS_VALUES:
-        counts[status] = await db.job_applications.count_documents({"user_id": uid, "status": status})
+        counts[status] = await db.job_applications.count_documents({
+            "user_id": uid, "status": status, "dry_run": {"$ne": True}
+        })
     settings = await get_settings(uid)
     return {"counts": counts, "sent_today": await count_sent_today(uid),
             "autopilot": settings.get("autopilot", {}), "gmail_connected": bool(
                 await db.gmail_connections.find_one({"user_id": uid, "status": "connected"}, {"_id": 0}))}
+
+
+@router.delete("/applications/dry-run")
+@router.post("/applications/clear-dry-run")
+async def clear_dry_run(user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    dry_apps = await db.job_applications.find({"user_id": uid, "dry_run": True}, {"id": 1}).to_list(1000)
+    app_ids = [a["id"] for a in dry_apps]
+    res_apps = await db.job_applications.delete_many({"user_id": uid, "dry_run": True})
+    res_events = await db.application_events.delete_many(
+        {"user_id": uid, "$or": [{"type": "dry_run_send"}, {"application_id": {"$in": app_ids}}]}
+    )
+    return {"ok": True, "deleted_applications": res_apps.deleted_count, "deleted_events": res_events.deleted_count}
 
 
 @router.get("/applications/{app_id}")
