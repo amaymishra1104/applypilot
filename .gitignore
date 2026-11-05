@@ -71,6 +71,8 @@ chainlit.md
 .vercel
 
 # Data and databases
+data/uploads/*
+!data/uploads/.gitkeep
 agenthub/agents/youtube/db
 
 # Archive files and large assets
