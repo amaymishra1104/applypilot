@@ -8,10 +8,10 @@ from crypto import encrypt
 from db import db, utc_now_iso
 from deps import get_current_user
 from mailer import send_email
+from llm import get_available_models
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
-MODELS = ["gpt-5.4", "gpt-5.6-terra", "gpt-5.5", "claude-sonnet-5-5", "gemini-3.1-pro-preview"]
 TONES = ["professional", "warm", "direct", "enthusiastic"]
 
 
@@ -76,7 +76,7 @@ class GoogleOAuthIn(BaseModel):
 async def read_settings(user: dict = Depends(get_current_user)):
     settings = await get_settings(user["user_id"])
     cfg = await db.google_oauth_config.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    settings["models_available"] = MODELS
+    settings["models_available"] = get_available_models()
     settings["tones_available"] = TONES
     settings["google_oauth"] = {"configured": bool(cfg and cfg.get("client_id")),
                                 "client_id": (cfg or {}).get("client_id", "")}
@@ -90,8 +90,9 @@ async def write_settings(body: SettingsIn, user: dict = Depends(get_current_user
     data = body.model_dump(exclude_none=True)
     updates = {}
     if data.get("ai_model") is not None:
-        if data["ai_model"] not in MODELS:
-            raise HTTPException(status_code=400, detail="Unknown model")
+        available = get_available_models()
+        if data["ai_model"] not in available:
+            raise HTTPException(status_code=400, detail=f"Unknown model. Available: {available}")
         updates["ai_model"] = data["ai_model"]
     if data.get("email_tone") is not None:
         if data["email_tone"] not in TONES:

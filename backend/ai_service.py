@@ -1,31 +1,23 @@
 import json
 import logging
 import os
-import uuid
+from typing import Optional
 
-try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-except ImportError:
-    class UserMessage:
-        def __init__(self, text: str):
-            self.text = text
-
-    class LlmChat:
-        def __init__(self, api_key: str = "", session_id: str = "", system_message: str = ""):
-            self.api_key = api_key
-            self.session_id = session_id
-            self.system_message = system_message
-            self.model = ""
-
-        def with_model(self, provider: str, model: str):
-            self.model = model
-            return self
-
-        async def send_message(self, message: UserMessage) -> str:
-            return "{}"
+from llm import get_default_model, get_llm_provider
+from llm.schemas import (
+    ApplicationEmailDraft,
+    ATSAnalysisResult,
+    CompanyResearch,
+    EmailOpportunitiesResult,
+    FollowupEmailDraft,
+    JobDescriptionParsed,
+    OpportunityMatchResult,
+    ReplyClassification,
+)
 
 logger = logging.getLogger(__name__)
-DEFAULT_MODEL = "gpt-5.4"
+
+DEFAULT_MODEL = get_default_model()
 
 _NO_FABRICATION = (
     "CRITICAL RULES: Use ONLY the facts provided in the input. Never invent, assume or exaggerate "
@@ -34,44 +26,30 @@ _NO_FABRICATION = (
 )
 
 
-def _chat(system_message: str, model: str | None = None) -> LlmChat:
-    key = os.environ.get("EMERGENT_LLM_KEY")
-    if not key:
-        raise RuntimeError("AI is not configured (EMERGENT_LLM_KEY missing)")
-    chat = LlmChat(api_key=key, session_id=str(uuid.uuid4()), system_message=system_message)
-    return chat.with_model("openai", model or DEFAULT_MODEL)
-
-
-async def _ask_json(system_message: str, prompt: str, model: str | None = None):
-    text = await _chat(system_message, model).send_message(UserMessage(text=prompt))
+async def _ask_json(system_message: str, prompt: str, schema: Optional[type] = None, model: Optional[str] = None):
     try:
-        return json.loads(text)
-    except Exception:
-        for opener, closer in (("{", "}"), ("[", "]")):
-            start, end = text.find(opener), text.rfind(closer)
-            if start != -1 and end > start:
-                try:
-                    return json.loads(text[start:end + 1])
-                except Exception:
-                    continue
-    logger.error("AI returned unparseable JSON: %s", text[:300])
-    return None
+        provider = get_llm_provider()
+        return await provider.generate_json(system=system_message, prompt=prompt, schema=schema, model=model)
+    except RuntimeError as e:
+        logger.error("AI provider not configured: %s", e)
+        return None
+    except Exception as e:
+        logger.error("AI call failed: %s", e)
+        return None
 
 
-async def parse_job_description(raw_text: str, model: str | None = None) -> dict | None:
-    system = (
-        "You are a precise recruitment data extractor. Return STRICT JSON only. " + _NO_FABRICATION
-    )
+async def parse_job_description(raw_text: str, model: Optional[str] = None) -> Optional[dict]:
+    system = "You are a precise recruitment data extractor. Return STRICT JSON only. " + _NO_FABRICATION
     prompt = (
         "Extract structured data from this job posting text. Return JSON with keys: "
         '{"company_name": str ("" if unknown), "job_title": str, "required_skills": [str], '
         '"experience_required": str (e.g. "3-5 years", "" if unknown), "description_summary": str (2-3 sentences)}. '
         "Only include skills explicitly mentioned in the text.\n\nJOB POSTING:\n" + raw_text[:12000]
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=JobDescriptionParsed, model=model)
 
 
-async def match_opportunity(job: dict, profiles: list[dict], model: str | None = None) -> dict | None:
+async def match_opportunity(job: dict, profiles: list[dict], model: Optional[str] = None) -> Optional[dict]:
     system = (
         "You are an expert technical recruiter who matches job requirements to candidate role profiles. "
         "Return STRICT JSON only. " + _NO_FABRICATION
@@ -104,11 +82,11 @@ async def match_opportunity(job: dict, profiles: list[dict], model: str | None =
         "If NO profile is a reasonable fit (all below 40), set role_profile_id to the best one anyway but "
         "explain clearly in reasoning. Score honestly - do not inflate."
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=OpportunityMatchResult, model=model)
 
 
-async def ats_analyze(resume_text: str, job: dict, model: str | None = None) -> dict | None:
-    system = ("You are an ATS (Applicant Tracking System) analyzer. Return STRICT JSON only. " + _NO_FABRICATION)
+async def ats_analyze(resume_text: str, job: dict, model: Optional[str] = None) -> Optional[dict]:
+    system = "You are an ATS (Applicant Tracking System) analyzer. Return STRICT JSON only. " + _NO_FABRICATION
     prompt = (
         "Analyze how well this resume would perform against the job in an ATS and for a human recruiter.\n\n"
         f"JOB: {job.get('job_title', '')} at {job.get('company_name', '')}\n"
@@ -118,17 +96,19 @@ async def ats_analyze(resume_text: str, job: dict, model: str | None = None) -> 
         'Return JSON: {"score": int 0-100, "matched_keywords": [str], "missing_keywords": [str], '
         '"suggestions": [str] (max 4 concrete, honest suggestions), "verdict": str (one honest sentence)}.'
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=ATSAnalysisResult, model=model)
 
 
-async def generate_application_email(context: dict, model: str | None = None) -> dict | None:
+async def generate_application_email(context: dict, model: Optional[str] = None) -> Optional[dict]:
     system = (
         "You are an expert career coach who writes job application emails. The emails must sound natural, "
         "professional, concise and genuinely human - never generic or copy-paste. " + _NO_FABRICATION
     )
     allowed_links = context.get("allowed_links") or []
-    links_clause = ("\nAUTHORIZED CANDIDATE LINKS (only these links may be referenced if relevant; do NOT invent any other links or URLs):\n"
-                    + "\n".join(allowed_links) if allowed_links else "\nAUTHORIZED CANDIDATE LINKS: None. Do NOT include any web links or URLs.")
+    links_clause = (
+        "\nAUTHORIZED CANDIDATE LINKS (only these links may be referenced if relevant; do NOT invent any other links or URLs):\n"
+        + "\n".join(allowed_links) if allowed_links else "\nAUTHORIZED CANDIDATE LINKS: None. Do NOT include any web links or URLs."
+    )
     feedback_clause = f"\nREVISION FEEDBACK: {context['feedback']}\n" if context.get("feedback") else ""
 
     style_hint = context.get("style_hint")
@@ -176,11 +156,11 @@ async def generate_application_email(context: dict, model: str | None = None) ->
         "- Keep the generated body under 180 words.\n\n"
         'Return JSON: {"subject": str, "body": str (plain text, \\n for line breaks)}.'
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=ApplicationEmailDraft, model=model)
 
 
-async def generate_followup_email(context: dict, model: str | None = None) -> dict | None:
-    system = ("You are an expert career coach writing polite follow-up emails. " + _NO_FABRICATION)
+async def generate_followup_email(context: dict, model: Optional[str] = None) -> Optional[dict]:
+    system = "You are an expert career coach writing polite follow-up emails. " + _NO_FABRICATION
     prompt = (
         "Write a short, polite follow-up email for a job application that has received no reply.\n\n"
         f"COMPANY: {context.get('company_name', '')}\nROLE: {context.get('job_title', '')}\n"
@@ -192,10 +172,10 @@ async def generate_followup_email(context: dict, model: str | None = None) -> di
         "application; 2-3 sentences max; restate interest briefly; polite closing. Do not sound desperate or pushy.\n\n"
         'Return JSON: {"subject": str, "body": str (plain text)}.'
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=FollowupEmailDraft, model=model)
 
 
-async def classify_reply(subject: str, body: str, model: str | None = None) -> dict | None:
+async def classify_reply(subject: str, body: str, model: Optional[str] = None) -> Optional[dict]:
     system = "You classify recruiter/HR email replies to job applications. Return STRICT JSON only."
     prompt = (
         "Classify this email reply to a job application.\n\n"
@@ -205,11 +185,11 @@ async def classify_reply(subject: str, body: str, model: str | None = None) -> d
         "interview = invites to an interview or scheduling; interested = positive/engaged reply; "
         "rejection = explicit or clear decline; auto_response = automated acknowledgment; other = anything else."
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=ReplyClassification, model=model)
 
 
-async def research_company(company_name: str, model: str | None = None) -> dict | None:
-    system = ("You are a careful business researcher. Return STRICT JSON only. " + _NO_FABRICATION)
+async def research_company(company_name: str, model: Optional[str] = None) -> Optional[dict]:
+    system = "You are a careful business researcher. Return STRICT JSON only. " + _NO_FABRICATION
     prompt = (
         f"Provide brief background on the company '{company_name}' based only on well-established general knowledge. "
         "If you are not confident about this specific company, say so honestly instead of guessing. "
@@ -217,11 +197,11 @@ async def research_company(company_name: str, model: str | None = None) -> dict 
         '"known_for": [str] (max 3), "confidence": "high"|"medium"|"low", '
         '"caveat": str (one line reminding this is general knowledge, not live research)}.'
     )
-    return await _ask_json(system, prompt, model)
+    return await _ask_json(system, prompt, schema=CompanyResearch, model=model)
 
 
-async def extract_opportunities_from_emails(messages: list[dict], model: str | None = None) -> list[dict]:
-    system = ("You detect real hiring/job opportunities from emails. Return STRICT JSON only. " + _NO_FABRICATION)
+async def extract_opportunities_from_emails(messages: list[dict], model: Optional[str] = None) -> list[dict]:
+    system = "You detect real hiring/job opportunities from emails. Return STRICT JSON only. " + _NO_FABRICATION
     prompt = (
         "Below are recent inbox emails. Identify ones that represent a genuine job opportunity, recruiter outreach, "
         "interview invite or hiring discussion for the inbox owner. Ignore newsletters, job-board digests, "
@@ -229,7 +209,7 @@ async def extract_opportunities_from_emails(messages: list[dict], model: str | N
         '\n\nReturn JSON: {"opportunities": [{"company_name": str, "job_title": str, "required_skills": [str], '
         '"description_summary": str, "from_email": str, "received_subject": str}]} - empty list if none.'
     )
-    result = await _ask_json(system, prompt, model)
+    result = await _ask_json(system, prompt, schema=EmailOpportunitiesResult, model=model)
     if isinstance(result, dict):
         return result.get("opportunities", []) or []
     return []

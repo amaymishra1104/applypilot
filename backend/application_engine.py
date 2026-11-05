@@ -13,6 +13,7 @@ from pymongo import ReturnDocument
 from db import db, utc_now_iso, parse_iso
 from mailer import notify_user
 from storage import get_object
+from llm import get_default_model
 import gmail_service
 import ai_service
 
@@ -54,7 +55,7 @@ async def add_event(user_id: str, application_id: str | None, event_type: str, d
 
 async def get_settings(user_id: str) -> dict:
     DEFAULTS = {
-        "ai_model": "gpt-5.4",
+        "ai_model": get_default_model(),
         "email_tone": "professional",
         "profile": {
             "full_name": "",
