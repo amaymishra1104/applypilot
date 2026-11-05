@@ -193,8 +193,18 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
     sem = asyncio.Semaphore(3)
     lock = asyncio.Lock()
 
+    used_openings: list[str] = []
+    style_hints = [
+        "lead with a specific technical accomplishment or problem solved from the resume",
+        "connect directly to the company's product, mission, or recent engineering work",
+        "highlight relevant architectural or domain expertise right away",
+        "focus on speed of delivery, pragmatic ownership, and immediate impact",
+        "open with enthusiasm for the specific challenges in this role",
+    ]
+    style_counter = 0
+
     async def process_contact(contact: dict):
-        nonlocal done, failed, skipped
+        nonlocal done, failed, skipped, style_counter
         email = norm_email(contact.get("hr_email", ""))
 
         if not email or not email_is_valid(email):
@@ -338,6 +348,11 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
         await db.job_matches.delete_many({"user_id": user_id, "opportunity_id": opp["id"]})
         await db.job_matches.insert_one(match_doc.copy())
 
+        async with lock:
+            current_style = style_hints[style_counter % len(style_hints)]
+            style_counter += 1
+            current_recent_openings = list(used_openings[-10:])
+
         gen_context = {
             "hr_name": contact.get("hr_name", ""),
             "hr_email": email,
@@ -355,6 +370,8 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
             "tone": settings.get("email_tone", "professional"),
             "candidate_name": candidate_name,
             "allowed_links": allowed_links,
+            "style_hint": current_style,
+            "recent_openings": current_recent_openings,
         }
 
         try:
@@ -369,6 +386,18 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
                     {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
                 )
             return
+
+        # Extract opening line (skipping greeting) for batch variation
+        raw_body = (generated.get("body") or "").strip()
+        lines = [line.strip() for line in raw_body.splitlines() if line.strip()]
+        opening_line = ""
+        for line in lines:
+            if re.match(r"^(dear|hello|hi|hey)\b", line, re.IGNORECASE):
+                continue
+            opening_line = line
+            break
+        if not opening_line and lines:
+            opening_line = lines[0]
 
         body_text = append_signature(generated.get("body", ""), prof_settings)
         score = int(match_result.get("score", 60))
@@ -420,6 +449,8 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
 
         async with lock:
             done += 1
+            if opening_line:
+                used_openings.append(opening_line)
             processed_ids.add(contact["id"])
             await db.bulk_jobs.update_one(
                 {"id": job_id},

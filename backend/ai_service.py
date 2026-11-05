@@ -131,6 +131,15 @@ async def generate_application_email(context: dict, model: str | None = None) ->
                     + "\n".join(allowed_links) if allowed_links else "\nAUTHORIZED CANDIDATE LINKS: None. Do NOT include any web links or URLs.")
     feedback_clause = f"\nREVISION FEEDBACK: {context['feedback']}\n" if context.get("feedback") else ""
 
+    style_hint = context.get("style_hint")
+    style_clause = f"\nSTYLE HINT FOR THIS EMAIL: {style_hint}\n" if style_hint else ""
+
+    recent_openings = context.get("recent_openings") or []
+    openings_clause = ""
+    if recent_openings:
+        openings_list = "\n".join(f"- \"{op}\"" for op in recent_openings[-10:])
+        openings_clause = f"\nRECENT OPENING LINES IN THIS BATCH (do NOT reuse or paraphrase these openings):\n{openings_list}\n"
+
     prompt = (
         "Write a job application email for the candidate.\n\n"
         f"TO: {context.get('hr_name') or 'Hiring Team'}{(' (' + context['hr_email'] + ')') if context.get('hr_email') else ''}\n"
@@ -148,11 +157,15 @@ async def generate_application_email(context: dict, model: str | None = None) ->
         f"TONE: {context.get('tone', 'professional')}\n"
         f"CANDIDATE NAME: {context.get('candidate_name', '')}\n"
         f"{links_clause}\n"
+        f"{style_clause}"
+        f"{openings_clause}"
         f"{feedback_clause}\n"
         "Requirements:\n"
         "- A specific, non-empty subject line mentioning the target role.\n"
         "- A proper greeting using the HR name if provided (e.g. 'Dear Sarah,'). NEVER use 'Hiring Manager' when an HR contact name is given.\n"
         "- Vary your opening line across emails - do NOT always start with 'I am writing to express my interest in...' or 'I hope this email finds you well'. Use a direct, compelling opening tailored to the specific role and company.\n"
+        "- Follow the STYLE HINT above if provided to craft a distinct, engaging opening.\n"
+        "- Do NOT reuse or closely paraphrase any of the RECENT OPENING LINES listed above.\n"
         "- 1-2 sentence introduction stating the role applied for.\n"
         "- 1 short paragraph highlighting ONLY resume-backed projects/skills that directly match THIS job's requirements.\n"
         "- A clear application intent sentence.\n"

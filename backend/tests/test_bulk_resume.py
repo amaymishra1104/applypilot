@@ -152,7 +152,7 @@ async def test_resume_running_bulk_jobs_on_startup():
 
     with patch("ai_service.match_opportunity", AsyncMock(return_value=mock_match)), \
          patch("ai_service.generate_application_email", AsyncMock(return_value=mock_email)):
-        resumed_ids = await server.resume_running_bulk_jobs()
+        resumed_ids = await server.resume_running_bulk_jobs(uid)
         assert job_id in resumed_ids
 
         # Wait for the background task to complete
@@ -176,5 +176,5 @@ async def test_resume_running_bulk_jobs_on_startup():
     assert sorted(emails) == ["alice@alphacorp.com", "bob@betacorp.com", "charlie@gammacorp.com"]
 
     # Verify running resume_running_bulk_jobs again finds no running jobs
-    resumed_again = await server.resume_running_bulk_jobs()
+    resumed_again = await server.resume_running_bulk_jobs(uid)
     assert resumed_again == []

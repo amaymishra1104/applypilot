@@ -22,8 +22,21 @@ SECOND = "pilot-second@applypilot.dev"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def test_db_lifecycle():
+def test_db_lifecycle(request):
     yield
+    # If running under xdist, workers must not drop the database while peer workers are still running.
+    # The master process drops it in pytest_sessionfinish after all workers exit.
+    if not hasattr(request.config, "workerinput"):
+        _drop_test_db()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    # Runs on the master controller after all xdist workers finish, or in serial mode
+    if not hasattr(session.config, "workerinput"):
+        _drop_test_db()
+
+
+def _drop_test_db():
     from pymongo import MongoClient
     mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
     try:

@@ -122,12 +122,15 @@ async def startup():
     asyncio.create_task(resume_running_bulk_jobs())
 
 
-async def resume_running_bulk_jobs() -> list[str]:
+async def resume_running_bulk_jobs(user_id: str | None = None) -> list[str]:
     """On app start, find bulk_jobs in 'running' and continue them without duplicating applications."""
     resumed = []
     try:
         from routes_contacts import run_bulk_generation_job
-        running_jobs = await db.bulk_jobs.find({"status": "running"}).to_list(100)
+        query = {"status": "running"}
+        if user_id:
+            query["user_id"] = user_id
+        running_jobs = await db.bulk_jobs.find(query).to_list(100)
         for job in running_jobs:
             logger.info("Resuming interrupted bulk job %s for user %s", job["id"], job["user_id"])
             asyncio.create_task(run_bulk_generation_job(job["id"], job["user_id"]))
