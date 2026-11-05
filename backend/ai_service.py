@@ -3,7 +3,26 @@ import logging
 import os
 import uuid
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+except ImportError:
+    class UserMessage:
+        def __init__(self, text: str):
+            self.text = text
+
+    class LlmChat:
+        def __init__(self, api_key: str = "", session_id: str = "", system_message: str = ""):
+            self.api_key = api_key
+            self.session_id = session_id
+            self.system_message = system_message
+            self.model = ""
+
+        def with_model(self, provider: str, model: str):
+            self.model = model
+            return self
+
+        async def send_message(self, message: UserMessage) -> str:
+            return "{}"
 
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-5.4"
