@@ -1,0 +1,34 @@
+{
+  "summary": "Short retest of the iteration_5 fixes. Backend: test_digest_fixes.py passed 4/4. (1) PUT digest.timezone '' returns 400 'Unknown timezone' and the saved timezone stays UTC. (2) An hour of 30 still returns 422 with detail as a list (expected). (3) send-now with 0 jobs returns {ok true, jobs 0, sent_to null}. (4) run_board_digest_cycle(user_id=pilot-second, force=True) handled a user with no app_settings doc (users 1, emails 0, last_count 0). A second non-forced run skipped that user (users 0). The settings doc this created was deleted. Frontend (Playwright, pilot-tester): typing 30 into settings-digest-hour clamps it to 23, and Save sends hour 23 and shows 'Settings saved'. An empty field is sent as hour 8. A mocked 422 with detail [{msg:'bad'}] shows the toast 'bad' with no crash or error overlay, and no pageerrors. The send-now toast pluralization works: '1 job' and '3 jobs' (both mocked). The real send-now shows 'No board jobs are waiting...'. All requested fixes pass. NEW BUG: after 'Save all settings', the AI model and email tone dropdowns go blank and the Account card shows 'Signed in as —'. This is because setSettings(res.data) uses the PUT response, which lacks models_available, tones_available, user and google_oauth.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/settings", "issue": "Returns only get_settings() and leaves out the models_available, tones_available, google_oauth and user fields that GET /api/settings returns. This causes the frontend bug below."},
+      {"endpoint": "run_board_digest_cycle", "issue": "The cosmetic event text 'Daily digest emailed: 1 board jobs' is still not pluralized (only the toast was fixed)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings save()", "issue": "After Save all settings, setSettings(res.data) replaces the state with the PUT response. The model and tone Select options disappear (the fields render blank) and 'Signed in as' shows '—' until a reload. A second save still sends the ai_model/email_tone values, so no data is lost, but the UI looks broken. Fix: setSettings(prev => ({...prev, ...res.data})), or make PUT return the same shape as GET.", "selector": "[data-testid='save-settings-button']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_digest_fixes.py", "/app/test_reports/pytest/pytest_digest_fixes.xml"],
+  "action_items": [
+    "In Settings.jsx save(), merge the PUT response into the existing state (or return the same shape as GET from PUT /api/settings) so the model and tone dropdowns and the 'Signed in as' email don't go blank after saving.",
+    "Optional: pluralize the board_digest event text in application_engine.run_board_digest_cycle."
+  ],
+  "critical_code_review_comments": [
+    "run_board_digest_cycle now iterates db.users and upserts app_settings {digest.last_sent_*} for every user processed. This is fine, but it creates settings docs for users who never saved settings (this is expected now).",
+    "The cron now covers ALL users, including the real owner. Future testing agents must not call /api/cron/board-digest during the owner's digest hour (default 08 UTC) if the owner has board apps waiting.",
+    "The owner's account (mishraamay11@gmail.com) gained an app_settings doc containing only autopilot {enabled false, mode approval, max_per_day 10} during this window. It was NOT created by this testing run (it was not touched), so it is probably the owner or the main agent. Flagged for awareness."
+  ],
+  "updated_files": ["/app/backend/tests/test_digest_fixes.py (new)", "/app/backend/tests/ui_ticket.py (new, prints a Clerk sign-in ticket for pilot-tester)"],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% of requested fixes; 1 new medium bug found"},
+  "seed_data_creation": "None persisted. pilot-second's temporary app_settings doc (created by the forced cycle) was deleted. pilot-tester was restored to digest {enabled true, hour 8, timezone UTC} and autopilot {auto, enabled, paused false}. No emails were sent (0 jobs; the jobs 1/3 send-now responses were mocked).",
+  "test_credentials": "pilot-tester via Clerk Backend API sessions (conftest) and a sign-in ticket (ui_ticket.py).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python3 -m pytest test_digest_fixes.py -n 0 -v (about 2s, no AI). For the UI: python3 ui_ticket.py, then open /sign-in?__clerk_ticket=<t> and go to /settings. Check that the model/tone selects stay filled after Save. Run restore_digest.py at the end."
+}

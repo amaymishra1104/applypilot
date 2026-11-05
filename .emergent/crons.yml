@@ -1,0 +1,43 @@
+crons:
+  - name: autopilot-tick
+    description: "Sends queued auto-pilot applications through connected Gmail within daily limits"
+    cron: "*/15 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/autopilot"
+    method: POST
+    enabled: true
+  - name: reply-scan
+    description: "Scans connected Gmail inboxes for HR replies and classifies them with AI"
+    cron: "*/30 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/scan-replies"
+    method: POST
+    enabled: true
+  - name: followup-reminders
+    description: "Creates AI follow-up drafts for applications with no HR reply"
+    cron: "0 13 * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/followups"
+    method: POST
+    enabled: true
+  - name: board-search
+    description: "Searches job boards by your role keywords and prepares matched board applications"
+    cron: "0 */6 * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/board-search"
+    method: POST
+    enabled: true
+  - name: board-digest
+    description: "Emails each user a morning list of new matched board jobs waiting for approval (at their chosen local hour)"
+    cron: "0 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/board-digest"
+    method: POST
+    enabled: true
+  - name: interview-reminders
+    description: "Emails a reminder before each scheduled interview in the tracker"
+    cron: "*/30 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/interview-reminders"
+    method: POST
+    enabled: true

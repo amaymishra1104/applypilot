@@ -1,0 +1,47 @@
+{
+  "summary": "Tested the Job Boards Auto-Apply feature end to end. Backend: 12 pytest cases in /app/backend/tests/test_job_boards.py. All 12 passed on the first run except one: the request to download the resume through the helper timed out once. That endpoint calls object storage; it returned in 0.3s on retry, and the rerun passed 11/11. Verified: overview shape; 401 without auth; extension token rotation and revocation; ext auth; apply profile; search config limits; save job from the helper (board detected from the URL, duplicate URLs and query strings ignored, HR contact pulled from the description, AI match, cover letter, application created as awaiting_approval); refusal to send board apps through Gmail; approve -> tasks -> submitting -> sent; auto mode -> queued_auto -> needs_attention -> retry; emergency stop and resume; cross-user isolation. A real board search with max 2 finished in about 30s: LinkedIn, Internshala, Wellfound, Instahyre and Remotive each found 8 jobs; Naukri and Indeed reported clear blocked messages. Frontend (signed in with a Clerk ticket): all four tabs, the mode note, approve, open job, cancel, apply by email instead (created an email draft), creating a connection code (decodes to {u,t}) and disconnecting, apply profile plus custom answers kept after reload, search config kept after reload, run history per board, and the extension zip download (HTTP 200, application/zip, same file as /app/extension). In the Application Queue, board apps show 'Open job' and no 'Send now'. At 390px the page does not scroll sideways on any tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/ext/resume/{version_id}", "issue": "Timed out once (>30s) in testing. It calls get_object with no try/except, so a storage error becomes an unhandled 500. /api/applications/{id}/attachment returns 502 in the same situation. Wrap it the same way, or the helper's buildContext throws and the task stays 'submitting' for 30 minutes."},
+      {"endpoint": "POST /api/ext/applications/{id}/result", "issue": "Accepts a result whatever the current status is. A cancelled or already-sent app (or one not in 'submitting') can be flipped to sent or needs_attention. Only allow results while the status is 'submitting'."},
+      {"endpoint": "run_board_search_for_user", "issue": "After the max_new_per_run budget is used up, it keeps scraping the remaining boards and keywords, including up to 8 LinkedIn description fetches per keyword. Wasteful, and makes blocking more likely. Could stop fetching once budget is 0, or skip LinkedIn description fetches."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "JobBoards.jsx", "issue": "If /boards/overview fails, data is set to {error:true} and the tabs still render. BoardSearch then reads config.keywords on undefined, which throws a TypeError and crashes the page. Render an error state instead.", "selector": "[data-testid=job-boards-page]", "priority": "MEDIUM"},
+      {"component": "ExtensionSetup revoke", "issue": "The revoke() API call has no try/catch, so a failure gives the user no feedback.", "selector": "[data-testid=revoke-connection-code]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Apply by email instead", "issue": "Creates an email draft but leaves the board application awaiting approval or approved. The user can end up applying twice, once through the helper and once by Gmail. Cancel the board app or warn the user.", "affected_selectors": ["board-email-*"]}
+    ],
+    "design_issues": [
+      {"screen": "Sidebar footer (all pages)", "issues": ["The 'Auto-Pilot approval' badge wraps onto 3 lines. The 'Emergency stop' button extends about 10px past the sidebar's right edge at 1920px."]},
+      {"screen": "Mobile header 390px", "issues": ["The 'Job Boards Auto-Apply' title wraps onto 2 lines next to the badge; the header is cramped."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_job_boards.py", "/app/backend/tests/conftest.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add a try/except (502) around get_object in /api/ext/resume",
+    "Only accept /api/ext/applications/{id}/result while the app is 'submitting'",
+    "Handle the overview load error in JobBoards.jsx (currently crashes BoardSearch)",
+    "When 'Apply by email instead' is used, cancel the board app or warn the user, to avoid a double application",
+    "Optional: stop scraping once the search budget is used up; fix the sidebar footer badge and Emergency stop overflow"
+  ],
+  "critical_code_review_comments": [
+    "Extension content.js marks a job 'submitted' if the page text matches the SUCCESS regex before any action ('Already applied'), or if the form closes after clicking submit. Both can give false positives, e.g. a modal closed by a validation error. Consider requiring the success text after submit.",
+    "Extension pollJob returns as soon as a match exists, before the application is created, so the popup log may leave out the application status.",
+    "Extension processTask has no try/catch; one bad task leaves its tab open and the app in 'submitting' until the 30-minute stale reset (which does work).",
+    "The /boards/applications/{app_id}/prepare path parameter is actually an opportunity id. Rename it to avoid confusion."
+  ],
+  "updated_files": ["/app/backend/tests/test_job_boards.py", "/app/backend/tests/conftest.py"],
+  "success_rate": {"backend": "100% (12/12 after a retry of one flaky storage-timeout test)", "frontend": "100% of the requested flows"},
+  "flaky_tests": ["test_approve_task_submit: /api/ext/resume read timeout once (1 of 3 runs or calls); passes on retry"],
+  "seed_data_creation": "Temporary TEST_ opportunities, applications, matches and HR contacts (TEST_ Acme Analytics, TEST_ Beta Corp, TEST_UI Corp, 2 LinkedIn jobs from the board search) for pilot-tester. All deleted by id afterwards. apply_profile reset to empty, board_search disabled with no boards, extension token revoked, autopilot restored to mode=auto, enabled=true, min_match_score=60, paused=false. pilot-second only had a temporary ext token, now revoked.",
+  "test_credentials": "Used /app/memory/test_credentials.md accounts through Clerk Backend API sessions and sign-in tickets (conftest.py loads CLERK_SECRET_KEY with dotenv_values without printing it).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: cd /app/backend/tests && python3 -m pytest test_job_boards.py -n 0 -v. The module-level teardown cleans up by id. test_board_search_run makes real scrapes plus about 2 AI calls; use -k 'not board_search_run' to save credits. UI sign-in: create a ticket via Clerk POST /v1/sign_in_tokens, then open /sign-in?__clerk_ticket=<token>. The pilot-tester account starts with autopilot enabled, mode auto, and roles Data Analyst and AI Engineer, each with an active resume.",
+  "rca of the issue": "The ext/resume timeout came from a slow call to the external Emergent object storage (60s timeout inside get_object); it was not a logic bug. The missing error handling turns such failures into 500s."
+}

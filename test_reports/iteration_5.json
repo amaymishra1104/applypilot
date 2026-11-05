@@ -1,0 +1,40 @@
+{
+  "summary": "Tested the Daily Board Digest feature end to end. Backend: the new test_board_digest.py passed 11/11. (1) GET /api/settings returns digest {enabled true, hour 8, timezone UTC} by default. (2) PUT digest with hour 24 or -1 returns 422. Timezone 'Mars/Base' returns 400 and is not saved. Asia/Kolkata is saved, and a partial update keeps the other fields. (3) send-now returns {ok true, jobs 0, sent_to null} when nothing is waiting. After 1 board app (awaiting_approval) was created through /api/ext/jobs, it returned jobs 1 and sent_to pilot-tester@applypilot.dev, the managed email sent with no errors in the log, and last_sent_date was not set. (4) /api/cron/board-digest returns 401 with no bearer and with a wrong bearer, returns 200 'accepted' with the secret, and a repeated X-Webhook-Id returns duplicate. (5) Cycle gating: a non-matching local hour sends nothing; disabled sends nothing; a matching hour in Asia/Kolkata sets last_sent_date to today's local date and logs a 'Daily digest emailed: 1 board jobs' event (log line: users 1, emails 1). A second cron call the same day changes nothing (users 0). Frontend: the digest card shows the switch, the hour field (8) and 'Your time zone: UTC'. Send digest now shows the info toast when nothing is waiting and the success toast 'Digest with 1 jobs sent to ...' when a job is waiting. The button shows 'Sending...' while busy. Save settings stored hour 9 and enabled false, and both survived a reload. In a browser context set to Asia/Kolkata, the tz text shows 'Asia/Calcutta' and save stores it (backend accepts the alias). At 390px the page has no sideways scroll (scrollWidth 390) and the card fits (x16, w358). BUG FOUND: entering an out-of-range hour (for example 30) and clicking Save makes the API return 422, and the whole app crashes with 'Objects are not valid as a React child' because toast.error() is passed FastAPI's detail array.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "run_board_digest_cycle", "issue": "It only goes through users that have an app_settings document. The digest is on by default (enabled true), but a user who never saved settings gets no digest. Right now that includes the owner, mishraamay11@gmail.com, and pilot-second, who have no settings doc."},
+      {"endpoint": "run_board_digest_cycle / send_board_digest", "issue": "send_email failures are not checked: last_sent_date and last_sent_at are saved and the event says 'emailed' even when send_email returned None (no credits or provider error), so that day's digest is silently lost. send-now also returns sent_to even if sending failed."},
+      {"endpoint": "PUT /api/settings digest.timezone", "issue": "An empty string ('') skips the timezone check (the check only runs when the value is truthy) and gets saved. The cycle then falls back to UTC. This is harmless, but it is not validated."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings save (and any toast.error(e.response.data.detail))", "issue": "With digest hour 30 (outside 0-23), Save makes PUT /api/settings return 422 with detail as an array of objects. toast.error() renders that array and crashes the app with the full-screen Runtime error 'Objects are not valid as a React child (found: object with keys {type, loc, msg, input, ctx, url})'. Fix: clamp the hour input to 0-23 (and stop an empty field from becoming 0), and add a shared error formatter that turns a 422 detail array into a string. The same pattern is used throughout Settings.jsx (and likely other pages).", "selector": "[data-testid='save-settings-button'] with [data-testid='settings-digest-hour']=30", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings digest toast", "issues": ["The success toast has a grammar error when there is 1 job: 'Digest with 1 jobs sent to ...'. Make the plural depend on the count."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_board_digest.py", "/app/test_reports/pytest/pytest_digest.xml"],
+  "action_items": [
+    "HIGH: Fix the app crash when an error detail is an array (422). Format e.response.data.detail into a string before calling toast.error, and clamp the digest hour input to 0-23.",
+    "Include users without an app_settings document in run_board_digest_cycle (the default is enabled), or create a settings doc for each user at sign-up.",
+    "Only save last_sent_date/last_sent_at and log the 'emailed' event when send_email returns a message id; make send-now report failures (for example 502).",
+    "Make '1 jobs' in the send-now toast plural only when needed."
+  ],
+  "critical_code_review_comments": [
+    "mailer board_digest: int(a.get('match_score', 0)) would raise if match_score were None. Today board apps always store an int score, but `int(a.get('match_score') or 0)` is safer.",
+    "write_settings calls zoneinfo.available_timezones() on every save. That reads the tz database each time; cache it or use a ZoneInfo() try/except instead.",
+    "Digest semantics: the cron sends only apps created after last_sent_at ('new'), while send-now sends everything waiting. This is consistent with the request, but the UI copy doesn't explain the difference.",
+    "The browser can report legacy zone names (Asia/Calcutta). The backend accepts them because they are in available_timezones, so this is fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_board_digest.py (new)", "/app/backend/tests/digest_inspect.py (new, read-only inspector)", "/app/backend/tests/restore_digest.py (new, restores digest/autopilot)"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "90% (all requested checks passed; the crash on an invalid hour is an additional bug found)"},
+  "seed_data_creation": "Temporary TEST_ Digest Corp and TEST_UI Epsilon opportunities, their board apps, matches and HR contact, plus the board_digest events. All were deleted by id afterwards. Final state for pilot-tester: 0 board apps, no extension token, digest {enabled true, hour 8, timezone UTC} with last_sent_* unset, autopilot mode=auto, enabled=true, paused=false, min_match_score=60. Note: 2 real digest emails went to pilot-tester@applypilot.dev (one from send-now, one from the cron).",
+  "test_credentials": "pilot-tester from /app/memory/test_credentials.md, using Clerk Backend API sessions (conftest) and Clerk sign-in tickets for the UI (/sign-in?__clerk_ticket=). WEBHOOK_CRON_SECRET is loaded with dotenv_values in the tests and never printed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python3 -m pytest test_board_digest.py -n 0 -v (about 40s, 1 AI match). It is safe to call the cron because only users with app_settings docs are processed; check with digest_inspect.py first. Retest the UI: set settings-digest-hour to 30 and click save-settings-button; expect an error toast, not a crash. UI seed/cleanup: ui_seed_fixes.py / ui_cleanup_fixes.py, then restore_digest.py."
+}

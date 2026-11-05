@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 330px; font-family: system-ui, sans-serif; margin: 0; padding: 14px; color: #0f172a; }
+    h1 { font-size: 16px; margin: 0 0 10px; }
+    button { width: 100%; padding: 9px; margin-top: 8px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; font-weight: 600; }
+    button.primary { background: #0f766e; color: #fff; border-color: #0f766e; }
+    textarea { width: 100%; box-sizing: border-box; font-size: 11px; height: 60px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 13px; }
+    #log { margin-top: 10px; font-size: 11px; color: #475569; max-height: 140px; overflow: auto; padding-left: 16px; }
+    #msg { margin-top: 8px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>ApplyPilot</h1>
+  <div id="connect" hidden>
+    <p class="muted">Paste the connection code from ApplyPilot &rarr; Job Boards Auto-Apply &rarr; Browser helper.</p>
+    <textarea id="code"></textarea>
+    <button class="primary" id="connectBtn">Connect</button>
+  </div>
+  <div id="main" hidden>
+    <p class="muted" id="who"></p>
+    <button class="primary" id="saveBtn">Save this job</button>
+    <button id="fillBtn">Autofill this application</button>
+    <div class="row"><span>Auto-apply approved jobs</span><input type="checkbox" id="auto" /></div>
+    <p class="muted">When on, every 5 minutes the helper opens the next approved job (or one above your match score in auto mode) in a background tab, fills it and submits it. Keep Chrome open and stay logged in to your boards.</p>
+    <button id="tickBtn">Submit next approved job now</button>
+    <button id="disconnectBtn">Disconnect</button>
+    <ul id="log"></ul>
+  </div>
+  <div id="msg"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

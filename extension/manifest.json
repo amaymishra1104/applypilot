@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyPilot Browser Helper",
+  "version": "1.0.0",
+  "description": "Save jobs from LinkedIn, Naukri, Indeed, Internshala, Wellfound, Instahyre and other boards to ApplyPilot, autofill applications and submit approved ones.",
+  "permissions": ["storage", "tabs", "scripting", "alarms", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "ApplyPilot" }
+}

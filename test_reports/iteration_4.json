@@ -1,0 +1,25 @@
+{
+  "summary": "Short retest of the iteration 3 fixes; all of them work. Backend: the new test_job_boards_fixes.py passed 3/3. The iteration 3 regression suite (search run excluded) passed 10/11. The one failure was a stale test assertion, not an app bug: posting a result on an already-sent app with an unknown outcome now returns 409 instead of 400, because the status check runs first. I updated that assertion. What was verified: (1) /ext/applications/{id}/result returns 409 for awaiting_approval, queued_auto and sent apps, and the status stays the same. The normal approve -> /ext/tasks -> submitting -> result 'submitted' -> sent flow still works. (2) /ext/resume returned 200 with a PDF in 0.45s; an unknown id returns 404. (3) switch-to-email returns 200 with an email application (no channel 'board', hr_email set) and the board app becomes cancelled. A second switch returns 400, and so do switches on submitting and sent apps. (4) A search run with max_new_per_run=1 over remotive, internshala and wellfound took 12s. Only 'remotive' appears in the run's boards (found 3, new 1); the later boards were skipped. (5) UI: with /api/boards/overview intercepted to return 500, the boards-load-error alert shows, there are no page errors and no crash, and 'Try again' brings the page back once the API works. (6) Clicking board-email-<id> in the UI calls switch-to-email (200) and shows the toast 'Email draft created in the Application Queue'. The card then shows Cancelled with the note 'Switched to email application', and the email button is gone. (7) Sidebar at 1920px: the Auto-Pilot badge is one line (22px high), and the Emergency stop button sits below it (right edge 170px, inside the 256px sidebar). (8) Header at 390px: the title is one line (28px), truncated with an ellipsis ('Job Bo...'), and the page has no sideways scroll (scrollWidth 390).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Board application card (cancelled after switch)", "issues": ["The 'Switched to email application' note uses the orange error style (board-app-error), so a normal user action looks like a failure. Consider a muted style for that note."]},
+      {"screen": "Mobile header 390px", "issues": ["The title truncates to 'Job Bo...', which is nearly unreadable. This is acceptable because the page H1 shows the full title, but the badge could be shortened or hidden on mobile so the title has more room."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_job_boards_fixes.py", "/app/backend/tests/test_job_boards.py", "/app/backend/tests/conftest.py", "/app/test_reports/pytest/pytest_fixes.xml", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": ["Optional: show the 'Switched to email application' note in a muted style, not the orange error style"],
+  "critical_code_review_comments": [
+    "switch_to_email: if generate_application raises (for example a 409 duplicate, or the HR email was deleted), the board app is correctly left unchanged. Note that the button only shows when has_hr_email is true, and that flag is based on opp.hr_contact_id, while generate also falls back to matching on company name.",
+    "ext_result: the status guard now runs before outcome validation, so an unknown outcome on a non-submitting app returns 409, not 400. This is fine; the tests were updated to match."
+  ],
+  "updated_files": ["/app/backend/tests/test_job_boards.py (auto-mode test sets 'submitting' via Mongo before posting the result and asserts the early 409; the bad-outcome assertion is now 409)", "/app/backend/tests/test_job_boards_fixes.py (new)", "/app/backend/tests/ui_seed_fixes.py (new)", "/app/backend/tests/ui_cleanup_fixes.py (new)"],
+  "success_rate": {"backend": "100% (3/3 fix tests; regression suite 10/11 before one stale assertion was updated, not re-run afterwards)", "frontend": "100% of the requested checks"},
+  "seed_data_creation": "Temporary TEST_ opportunities and apps (TEST_ Gamma Corp, TEST_ Delta Corp, TEST_ Acme Analytics, TEST_ Beta Corp, TEST_UI Epsilon, plus 1 Remotive job from the budget run), their matches and HR contacts, and the email apps created by switch-to-email. All were deleted by id or opportunity id afterwards. Final state for pilot-tester: 0 board apps, no extension token, board_search disabled with no boards, autopilot mode=auto, enabled=true, min_match_score=60, paused=false.",
+  "test_credentials": "pilot-tester / pilot-second from /app/memory/test_credentials.md, using Clerk Backend API sessions; for the UI, a Clerk sign-in ticket opened at /sign-in?__clerk_ticket=<token>.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix tests: cd /app/backend/tests && python3 -m pytest test_job_boards_fixes.py -n 0 -v (about 50s, several AI calls). Regression suite: test_job_boards.py -n 0 -k 'not board_search_run'. UI seed: python3 ui_seed_fixes.py prints an app id and a sign-in ticket; afterwards run python3 ui_cleanup_fixes.py."
+}
