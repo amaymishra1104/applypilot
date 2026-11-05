@@ -6,8 +6,10 @@ import pytest
 from dotenv import dotenv_values, load_dotenv
 from pymongo import MongoClient
 
-ENV = dotenv_values("/app/backend/.env")
-MDB = MongoClient(ENV["MONGO_URL"])[ENV["DB_NAME"]]
+ENV = dotenv_values("backend/.env") or dotenv_values("/app/backend/.env") or {}
+MONGO_URL = ENV.get("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = ENV.get("DB_NAME", "applypilot_test")
+MDB = MongoClient(MONGO_URL)[DB_NAME]
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -1,5 +1,6 @@
 # Daily Board Digest: settings.digest defaults/validation/persistence, send-now counts, cron auth,
 # run_board_digest_cycle local-hour + once-per-local-day gating (last_sent_date in settings.digest).
+import os
 import time
 import uuid
 from datetime import datetime
@@ -12,9 +13,11 @@ from pymongo import MongoClient
 
 from conftest import BASE_URL
 
-ENV = dotenv_values("/app/backend/.env")
-CRON = ENV.get("WEBHOOK_CRON_SECRET")
-MDB = MongoClient(ENV["MONGO_URL"])[ENV["DB_NAME"]]
+ENV = dotenv_values("backend/.env") or dotenv_values("/app/backend/.env") or {}
+MONGO_URL = ENV.get("MONGO_URL", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("DB_NAME") or ENV.get("DB_NAME", "applypilot_test")
+CRON = ENV.get("WEBHOOK_CRON_SECRET", "test_cron_secret_1234567890")
+MDB = MongoClient(MONGO_URL)[DB_NAME]
 TAG = uuid.uuid4().hex[:8]
 STATE = {"opps": [], "apps": []}
 TZ = "Asia/Kolkata"

@@ -1,6 +1,11 @@
 # Shared fixtures: Clerk Backend API session tokens for the two test accounts
 import os
+import sys
 import time
+
+# Ensure DB_NAME points to applypilot_test for testing
+os.environ["DB_NAME"] = "applypilot_test"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest
 import requests
@@ -15,16 +20,40 @@ PRIMARY = "pilot-tester@applypilot.dev"
 SECOND = "pilot-second@applypilot.dev"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def test_db_lifecycle():
+    yield
+    from pymongo import MongoClient
+    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    try:
+        client = MongoClient(mongo_url)
+        client.drop_database("applypilot_test")
+        client.close()
+    except Exception:
+        pass
+
+
 class ClerkSession:
     def __init__(self, email):
+        if not _SK:
+            pytest.skip("Clerk secret key missing (Emergent managed auth not configured outside platform)")
         h = {"Authorization": f"Bearer {_SK}"}
-        users = requests.get(f"{CLERK}/users", params={"email_address": email}, headers=h, timeout=20).json()
-        if not users:
+        try:
+            r = requests.get(f"{CLERK}/users", params={"email_address": email}, headers=h, timeout=10)
+            if r.status_code != 200:
+                pytest.skip(f"Clerk user {email} lookup failed: {r.status_code}")
+            users = r.json()
+        except Exception as exc:
+            pytest.skip(f"Clerk API unreachable: {exc}")
+        if not users or not isinstance(users, list):
             pytest.skip(f"Clerk user {email} missing")
         self.uid = users[0]["id"]
-        s = requests.post(f"{CLERK}/sessions", json={"user_id": self.uid}, headers=h, timeout=20)
-        s.raise_for_status()
-        self.sid = s.json()["id"]
+        try:
+            s = requests.post(f"{CLERK}/sessions", json={"user_id": self.uid}, headers=h, timeout=10)
+            s.raise_for_status()
+            self.sid = s.json()["id"]
+        except Exception as exc:
+            pytest.skip(f"Clerk session creation failed: {exc}")
         self._h = h
         self._tok, self._t = None, 0
 
