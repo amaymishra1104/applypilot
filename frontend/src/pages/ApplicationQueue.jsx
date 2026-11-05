@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Download, Gauge, Pencil, Play, RefreshCw, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, Gauge, Loader2, Pencil, Play, RefreshCw, Send, Trash2 } from "lucide-react";
 import { api, downloadFile } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -171,7 +171,9 @@ export default function ApplicationQueue({ onChanged }) {
           <TabsTrigger value="all">All ({apps.length})</TabsTrigger>
           <TabsTrigger value="draft">Drafts</TabsTrigger>
           <TabsTrigger value="awaiting_approval">Awaiting approval</TabsTrigger>
+          <TabsTrigger value="approved">Approved</TabsTrigger>
           <TabsTrigger value="queued_auto">Queued</TabsTrigger>
+          <TabsTrigger value="sending">Sending ({stats?.counts?.sending || 0})</TabsTrigger>
           <TabsTrigger value="sent">Sent</TabsTrigger>
           <TabsTrigger value="send_failed">Failed</TabsTrigger>
         </TabsList>
@@ -211,13 +213,16 @@ export default function ApplicationQueue({ onChanged }) {
                     {app.channel === "board" && app.job_url && (
                       <Button size="sm" variant="outline" asChild data-testid={`open-job-${app.id}`}><a href={app.job_url} target="_blank" rel="noreferrer">Open job</a></Button>
                     )}
-                    {app.channel !== "board" && ["draft", "awaiting_approval", "approved"].includes(app.status) && (
+                    {app.status === "sending" && (
+                      <Button size="sm" variant="outline" disabled data-testid={`sending-${app.id}`}><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-amber-500" /> Sending...</Button>
+                    )}
+                    {app.channel !== "board" && ["draft", "awaiting_approval", "approved", "queued_auto"].includes(app.status) && (
                       <Button size="sm" onClick={() => act(app, "send")} disabled={busyId === app.id} data-testid={`send-${app.id}`}><Send className="mr-1.5 h-3.5 w-3.5" /> Send now</Button>
                     )}
                     {["send_failed", "needs_attention"].includes(app.status) && (
                       <Button size="sm" variant="outline" onClick={() => act(app, "retry")} disabled={busyId === app.id} data-testid={`retry-${app.id}`}><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry</Button>
                     )}
-                    {!["sent", "cancelled"].includes(app.status) && (
+                    {!["sent", "sending", "cancelled"].includes(app.status) && (
                       <Button size="sm" variant="outline" onClick={() => setEditFor(app)} data-testid={`edit-${app.id}`}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit</Button>
                     )}
                     <Button size="sm" variant="outline" onClick={() => downloadFile(`/applications/${app.id}/attachment`, app.attachment_filename || "resume.pdf")} data-testid={`attachment-${app.id}`}><Download className="mr-1.5 h-3.5 w-3.5" /> Attachment</Button>

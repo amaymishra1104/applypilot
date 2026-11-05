@@ -10,6 +10,7 @@ export const STATUS_META = {
   queued_auto: { label: "Queued (auto)", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30" },
   scheduled: { label: "Scheduled", cls: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30" },
   approved: { label: "Approved", cls: "bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30" },
+  sending: { label: "Sending...", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 animate-pulse" },
   sent: { label: "Sent", cls: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30" },
   followed_up: { label: "Followed up", cls: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30" },
   replied: { label: "HR replied", cls: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30" },

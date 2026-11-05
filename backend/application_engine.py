@@ -2,9 +2,12 @@
 (auto-pilot, reply scanning, follow-ups) used by both API routes and crons."""
 
 import asyncio
+from contextlib import suppress
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+
+from pymongo import ReturnDocument
 
 from db import db, utc_now_iso, parse_iso
 from mailer import notify_user
@@ -92,27 +95,88 @@ async def duplicate_application_exists(user_id: str, hr_email: str, job_title: s
     return await db.job_applications.count_documents(query) > 0
 
 
-async def send_application(user_id: str, app_doc: dict, trigger: str = "manual") -> dict:
+async def cleanup_stuck_sending_applications(user_id: str | None = None) -> int:
+    """If the process dies mid-send, applications stay in 'sending'.
+    Move any claims older than 10 minutes to 'needs_attention' with a note to check Gmail Sent."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    query = {"status": "sending", "sending_at": {"$lt": cutoff}}
+    if user_id:
+        query["user_id"] = user_id
+    note = "Sending timed out after 10 minutes. Please check your Gmail Sent folder before retrying."
+    stuck_docs = await db.job_applications.find(query, {"_id": 0, "id": 1, "user_id": 1}).to_list(100)
+    for doc in stuck_docs:
+        await db.job_applications.update_one(
+            {"id": doc["id"], "user_id": doc["user_id"]},
+            {"$set": {"status": "needs_attention", "error": note}},
+        )
+        await add_event(doc["user_id"], doc["id"], "needs_attention", note)
+    return len(stuck_docs)
+
+
+async def send_application(user_id: str, app_doc: dict, trigger: str = "manual",
+                           allowed_statuses: list[str] | None = None) -> dict:
     """Send an application email through the user's connected Gmail with the exact
-    resume version snapshot attached. Returns {"ok": bool, "error": str|None}."""
+    resume version snapshot attached. Claims the application atomically to prevent duplicate sends.
+    Returns {"ok": bool, "error": str|None}."""
     if app_doc.get("status") == "sent":
         return {"ok": False, "error": "Application was already sent"}
     if app_doc.get("channel") == "board":
         return {"ok": False, "error": "Job board applications are submitted by the ApplyPilot browser helper"}
+
+    SENDABLE_STATUSES = ["draft", "awaiting_approval", "approved", "queued_auto"]
+    claim_statuses = allowed_statuses if allowed_statuses else SENDABLE_STATUSES
+    now_iso = utc_now_iso()
+
+    # Atomically claim the application
+    claimed = await db.job_applications.find_one_and_update(
+        {"id": app_doc["id"], "user_id": user_id, "status": {"$in": claim_statuses}},
+        {"$set": {
+            "status": "sending",
+            "previous_status": app_doc.get("status"),
+            "sending_at": now_iso,
+        }},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not claimed:
+        return {"ok": False, "error": "Application is already being sent or cannot be sent from current status"}
+
+    settings = await get_settings(user_id)
+    autop = settings.get("autopilot", {})
+    max_retries = int(autop.get("max_retries", 2))
+    retries = int(claimed.get("retries", 0))
+
+    async def _handle_failure(err_msg: str) -> dict:
+        nonlocal retries
+        retries += 1
+        prev_status = claimed.get("previous_status") or "approved"
+        new_status = "send_failed" if retries >= max_retries else prev_status
+        await db.job_applications.update_one(
+            {"id": app_doc["id"], "user_id": user_id},
+            {"$set": {"status": new_status, "retries": retries, "error": err_msg[:300]}},
+        )
+        await add_event(
+            user_id, app_doc["id"],
+            "send_failed" if new_status == "send_failed" else "send_attempt_failed",
+            err_msg[:200],
+            {"retries": retries, "max_retries": max_retries, "status": new_status},
+        )
+        return {"ok": False, "error": err_msg[:200], "status": new_status, "retries": retries}
+
     if not email_is_valid(app_doc.get("hr_email", "")):
-        return {"ok": False, "error": f"Invalid recipient email: {app_doc.get('hr_email', '')}"}
+        return await _handle_failure(f"Invalid recipient email: {app_doc.get('hr_email', '')}")
+
     conn = await db.gmail_connections.find_one({"user_id": user_id}, {"_id": 0})
-    if not conn or not conn.get("email"):
-        return {"ok": False, "error": "Gmail is not connected"}
+    if not conn or conn.get("status") == "reauth_required" or not conn.get("email"):
+        return await _handle_failure("Gmail is not connected or re-authentication is required")
 
     attachment = None
     if app_doc.get("attachment_path"):
         try:
             attachment, _ = await asyncio.to_thread(get_object, app_doc["attachment_path"])
         except Exception as exc:
-            return {"ok": False, "error": f"Resume attachment unavailable: {exc}"}
+            return await _handle_failure(f"Resume attachment unavailable: {exc}")
     else:
-        return {"ok": False, "error": "No resume attached to this application"}
+        return await _handle_failure("No resume attached to this application")
 
     try:
         message_id, thread_id = await gmail_service.send_gmail_email(
@@ -125,64 +189,136 @@ async def send_application(user_id: str, app_doc: dict, trigger: str = "manual")
             reply_to=conn["email"],
         )
     except Exception as exc:
+        return await _handle_failure(str(exc))
+
+    # Right after Gmail returns a message id, write status "sent" immediately.
+    # If that DB write fails, log the message id and never revert to a retryable status.
+    sent_iso = utc_now_iso()
+    try:
         await db.job_applications.update_one(
             {"id": app_doc["id"], "user_id": user_id},
-            {"$set": {"status": "send_failed", "error": str(exc)[:300]}},
+            {"$set": {
+                "status": "sent",
+                "sent_at": sent_iso,
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "gmail_email": conn["email"],
+                "error": None,
+                "retries": 0,
+            }},
         )
-        await add_event(user_id, app_doc["id"], "send_failed", str(exc)[:200])
-        return {"ok": False, "error": str(exc)[:200]}
+    except Exception as db_exc:
+        logger.critical(
+            "CRITICAL: Failed to record 'sent' status in DB after Gmail sent email! "
+            "message_id=%s thread_id=%s app_id=%s user_id=%s exc=%s",
+            message_id, thread_id, app_doc["id"], user_id, db_exc,
+        )
+        with suppress(Exception):
+            await db.job_applications.update_one(
+                {"id": app_doc["id"], "user_id": user_id},
+                {"$set": {
+                    "status": "needs_attention",
+                    "message_id": message_id,
+                    "thread_id": thread_id,
+                    "error": f"Email was sent via Gmail (message_id: {message_id}) but DB update failed: {db_exc}",
+                }},
+            )
+        return {"ok": True, "warning": "Email sent but DB update failed", "message_id": message_id}
 
-    await db.job_applications.update_one(
-        {"id": app_doc["id"], "user_id": user_id},
-        {"$set": {"status": "sent", "sent_at": utc_now_iso(), "message_id": message_id,
-                  "thread_id": thread_id, "gmail_email": conn["email"], "error": None, "retries": 0}},
-    )
     await add_event(user_id, app_doc["id"], "application_sent",
                     f"Sent to {app_doc['hr_email']} via Gmail ({trigger})",
                     {"company": app_doc.get("company", ""), "resume": app_doc.get("resume_name", "")})
-    settings = await get_settings(user_id)
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0}) or {}
     if settings.get("notifications", {}).get("application_sent") and user.get("email"):
         await notify_user(user, "application_sent", {
             "company": app_doc.get("company", ""), "role": app_doc.get("job_title", ""),
             "resume": app_doc.get("resume_name", "")})
-    return {"ok": True}
+    return {"ok": True, "message_id": message_id}
 
 
 # ---------------------------------------------------------------- auto-pilot
 
 async def run_autopilot_cycle(user_id: str | None = None) -> dict:
     summary = {"users": 0, "sent": 0, "skipped": 0, "failed": 0}
-    query = {"autopilot.enabled": True, "autopilot.paused": False, "autopilot.mode": "auto"}
+
+    # Clean up any stale claims older than 10 minutes
+    await cleanup_stuck_sending_applications(user_id)
+
+    # Autopilot still needs enabled=true and paused=false. "Run cycle now" follows the same rules.
+    query = {"autopilot.enabled": True, "autopilot.paused": False}
     if user_id:
         query["user_id"] = user_id
+
     async for settings in db.app_settings.find(query, {"_id": 0}):
         uid = settings["user_id"]
-        summary["users"] += 1
+        autop = settings.get("autopilot", {})
+        mode = autop.get("mode", "approval")
+
+        # Manual mode: send nothing automatically
+        if mode == "manual":
+            summary["skipped"] += 1
+            continue
+        elif mode == "approval":
+            allowed_statuses = ["approved"]
+        elif mode == "auto":
+            allowed_statuses = ["approved", "queued_auto"]
+        else:
+            summary["skipped"] += 1
+            continue
+
         conn = await db.gmail_connections.find_one({"user_id": uid}, {"_id": 0})
+        # Autopilot must skip users whose connection is "reauth_required"
         if not conn or conn.get("status") == "reauth_required" or conn.get("status") != "connected":
             summary["skipped"] += 1
             continue
-        autop = settings.get("autopilot", {})
+
+        summary["users"] += 1
+        max_per_day = int(autop.get("max_per_day", 10))
         sent_today = await count_sent_today(uid)
-        remaining = int(autop.get("max_per_day", 10)) - sent_today
+        remaining = max_per_day - sent_today
         if remaining <= 0:
             summary["skipped"] += 1
             continue
-        last_sent = await db.job_applications.find_one(
-            {"user_id": uid, "status": "sent"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
-        if last_sent and last_sent.get("sent_at"):
-            minutes_since = (datetime.now(timezone.utc) - parse_iso(last_sent["sent_at"])).total_seconds() / 60
-            if minutes_since < float(autop.get("min_delay_minutes", 30)):
-                summary["skipped"] += 1
-                continue
+
+        min_delay_min = float(autop.get("min_delay_minutes", 30))
+        if min_delay_min > 0:
+            last_sent = await db.job_applications.find_one(
+                {"user_id": uid, "status": "sent"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+            if last_sent and last_sent.get("sent_at"):
+                minutes_since = (datetime.now(timezone.utc) - parse_iso(last_sent["sent_at"])).total_seconds() / 60
+                if minutes_since < min_delay_min:
+                    summary["skipped"] += 1
+                    continue
+
         candidates = await db.job_applications.find(
-            {"user_id": uid, "status": "queued_auto", "channel": {"$ne": "board"}}, {"_id": 0},
+            {"user_id": uid, "status": {"$in": allowed_statuses}, "channel": {"$ne": "board"}}, {"_id": 0},
         ).sort("created_at", 1).to_list(remaining)
+
         failures = 0
+        min_score = int(autop.get("min_match_score", 60))
+
         for app_doc in candidates:
-            if not app_doc.get("match_score_ok", False):
-                continue
+            # Enforce daily cap inside the loop
+            sent_today = await count_sent_today(uid)
+            if sent_today >= max_per_day:
+                summary["skipped"] += 1
+                break
+
+            # Enforce min_delay between sends inside a single cycle too
+            if min_delay_min > 0:
+                last_sent = await db.job_applications.find_one(
+                    {"user_id": uid, "status": "sent"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+                if last_sent and last_sent.get("sent_at"):
+                    minutes_since = (datetime.now(timezone.utc) - parse_iso(last_sent["sent_at"])).total_seconds() / 60
+                    if minutes_since < min_delay_min:
+                        summary["skipped"] += 1
+                        break
+
+            # Score gating applies only to "queued_auto" items. Hand-approved items send regardless of score.
+            if app_doc.get("status") == "queued_auto":
+                if int(app_doc.get("match_score", 0)) < min_score:
+                    continue
+
             if not email_is_valid(app_doc.get("hr_email", "")):
                 await db.job_applications.update_one(
                     {"id": app_doc["id"], "user_id": uid},
@@ -190,24 +326,19 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
                 await add_event(uid, app_doc["id"], "send_failed", "Invalid recipient email (auto-pilot)")
                 summary["failed"] += 1
                 continue
-            result = await send_application(uid, app_doc, trigger="auto-pilot")
+
+            result = await send_application(uid, app_doc, trigger="auto-pilot", allowed_statuses=allowed_statuses)
             if result["ok"]:
                 summary["sent"] += 1
             else:
                 summary["failed"] += 1
                 failures += 1
-                retries = int(app_doc.get("retries", 0)) + 1
-                if retries >= int(autop.get("max_retries", 2)):
-                    await db.job_applications.update_one(
-                        {"id": app_doc["id"], "user_id": uid},
-                        {"$set": {"status": "send_failed", "retries": retries}})
+                if result.get("status") == "send_failed":
                     user = await db.users.find_one({"user_id": uid}, {"_id": 0}) or {}
                     if settings.get("notifications", {}).get("send_failed") and user.get("email"):
                         await notify_user(user, "send_failed", {
                             "company": app_doc.get("company", ""), "error": result["error"]})
-                else:
-                    await db.job_applications.update_one(
-                        {"id": app_doc["id"], "user_id": uid}, {"$set": {"retries": retries}})
+
         if failures >= 3:
             await db.app_settings.update_one(
                 {"user_id": uid}, {"$set": {"autopilot.paused": True}})

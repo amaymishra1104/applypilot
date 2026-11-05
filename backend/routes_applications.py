@@ -48,7 +48,7 @@ class InterviewIn(BaseModel):
     notes: str = ""
 
 
-STATUS_VALUES = {"draft", "awaiting_approval", "queued_auto", "scheduled", "approved", "sent",
+STATUS_VALUES = {"draft", "awaiting_approval", "queued_auto", "scheduled", "approved", "sending", "sent",
                  "send_failed", "replied", "interview", "rejected", "offer", "cancelled",
                  "needs_attention", "submitting"}
 
@@ -124,7 +124,10 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
     mode = settings.get("autopilot", {}).get("mode", "approval")
     autop = settings.get("autopilot", {})
     score = int(match.get("score", 0))
-    if mode == "auto" and match.get("confirmed") and score >= int(autop.get("min_match_score", 60)):
+    min_score = int(autop.get("min_match_score", 60))
+    if mode == "auto" and score >= min_score:
+        match["confirmed"] = True
+        await db.job_matches.update_one({"id": match["id"]}, {"$set": {"confirmed": True}})
         status = "queued_auto"
     elif mode == "manual":
         status = "draft"
@@ -219,6 +222,8 @@ async def send_now(app_id: str, user: dict = Depends(get_current_user)):
     app_doc = await get_owned("job_applications", app_id, uid)
     if app_doc.get("status") == "sent":
         raise HTTPException(status_code=400, detail="Application was already sent")
+    if app_doc.get("status") == "sending":
+        raise HTTPException(status_code=409, detail="Application is already being sent")
     settings = await get_settings(uid)
     sent_today = await count_sent_today(uid)
     if sent_today >= int(settings["autopilot"]["max_per_day"]):

@@ -55,7 +55,7 @@ async def dashboard(user: dict = Depends(get_current_user)):
             "total_applications": len(apps),
             "emails_sent": sent,
             "pending": sum(status_counts.get(s, 0) for s in
-                           ("draft", "awaiting_approval", "queued_auto", "scheduled", "approved")),
+                           ("draft", "awaiting_approval", "queued_auto", "scheduled", "approved", "sending")),
             "hr_replies": status_counts.get("replied", 0),
             "interviews": status_counts.get("interview", 0),
             "failed": status_counts.get("send_failed", 0),
