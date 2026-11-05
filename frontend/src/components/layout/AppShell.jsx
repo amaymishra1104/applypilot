@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Show, UserButton } from "@clerk/react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
   BarChart3, Briefcase, CalendarClock, FileText, Gauge, LayoutDashboard, Mail,
-  Globe, Menu, Moon, Settings as SettingsIcon, Square, Sun, Users,
+  Globe, LogOut, Menu, Moon, Settings as SettingsIcon, Square, Sun, Users,
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -148,6 +148,7 @@ function ShellContent() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [queueStatus, setQueueStatus] = useState(null);
+  const { user, logout } = useAuth();
 
   const refreshStatus = async () => {
     try {
@@ -194,16 +195,22 @@ function ShellContent() {
           <div className="ml-auto flex items-center gap-2">
             <AutopilotPill status={queueStatus} />
             <ThemeToggle />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <UserButton afterSignOutUrl="/" />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>Account</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="flex items-center gap-2 pl-2 border-l">
+              <span className="hidden text-xs text-muted-foreground sm:inline font-mono">
+                {user?.email || "owner"}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={logout}
+                title="Sign out"
+                data-testid="sign-out-button"
+                className="h-8 px-2 text-muted-foreground hover:text-foreground"
+              >
+                <LogOut className="h-4 w-4 mr-1" />
+                <span className="text-xs">Sign out</span>
+              </Button>
+            </div>
           </div>
         </header>
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
@@ -226,16 +233,24 @@ function ShellContent() {
 }
 
 export default function AppShell() {
-  return (
-    <>
-      <Show when="signed-in">
-        <ShellContent />
-      </Show>
-      <Show when="signed-out">
-        <Navigate to="/sign-in" replace />
-      </Show>
-    </>
-  );
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">Loading ApplyPilot...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/sign-in" replace />;
+  }
+
+  return <ShellContent />;
 }
 
 export { Brand };

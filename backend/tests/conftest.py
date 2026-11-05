@@ -6,6 +6,9 @@ import time
 # Ensure DB_NAME points to applypilot_test for testing
 os.environ["DB_NAME"] = "applypilot_test"
 os.environ["DRY_RUN"] = "false"
+os.environ.setdefault("OWNER_EMAIL", "owner@applypilot.dev")
+os.environ.setdefault("OWNER_PASSWORD_HASH", "$2b$12$aCdSlPdvtDVi9woG9kKGIewm0o1.l6wR7u2V4w5QOQ/PHdbyIyogy")
+os.environ.setdefault("SESSION_SECRET", "test_session_secret_for_applypilot_owner_12345")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest

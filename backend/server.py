@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from db import db, client
-from clerk_auth import clerk_router
+from auth import validate_owner_config
+from routes_auth import router as auth_router
 from routes_roles import router as roles_router
 from routes_contacts import router as contacts_router
 from routes_opportunities import router as opportunities_router
@@ -99,7 +100,7 @@ async def health():
     return {"status": "healthy"}
 
 
-app.include_router(clerk_router)
+app.include_router(auth_router)
 for router in (roles_router, contacts_router, opportunities_router, applications_router,
                tracking_router, gmail_router, settings_router, dashboard_router, cron_router, boards_router):
     app.include_router(router)
@@ -116,6 +117,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    validate_owner_config()
     app.state.index_task = asyncio.create_task(ensure_indexes())
     asyncio.create_task(_init_storage())
     asyncio.create_task(_cleanup_oauth_states())

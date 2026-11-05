@@ -3,38 +3,22 @@ import axios from "axios";
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
-let getTokenFn = null;
-export const setTokenGetter = (fn) => {
-  getTokenFn = fn;
-};
-
-export const api = axios.create({ baseURL: API });
-
-api.interceptors.request.use(async (config) => {
-  if (getTokenFn) {
-    try {
-      const token = await getTokenFn();
-      if (token) config.headers.Authorization = `Bearer ${token}`;
-    } catch (e) {
-      // token unavailable; request goes out unauthenticated and fails with 401
-    }
-  }
-  return config;
-});
+export const api = axios.create({ baseURL: API, withCredentials: true });
 
 api.interceptors.response.use(undefined, (error) => {
   const detail = error?.response?.data?.detail;
   if (Array.isArray(detail)) {
     error.response.data.detail = detail.map((d) => d?.msg || String(d)).join("; ");
   }
+  if (error?.response?.status === 401) {
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/sign-in")) {
+      window.location.href = "/login";
+    }
+  }
   return Promise.reject(error);
 });
 
-export const authQueryParam = async () => {
-  if (!getTokenFn) return "";
-  const token = await getTokenFn();
-  return `?auth=${encodeURIComponent(token)}`;
-};
+export const authQueryParam = async () => "";
 
 export const fetchBlobUrl = async (path) => {
   const res = await api.get(path, { responseType: "blob" });

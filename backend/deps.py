@@ -1,44 +1,65 @@
-import os
+import hashlib
+from fastapi import HTTPException, Request
 
-import requests as http
-from fastapi import Depends, HTTPException
-from pymongo.errors import DuplicateKeyError
-
-from clerk_auth import require_user
 from db import db, utc_now_iso
+from auth import (
+    COOKIE_NAME,
+    OWNER_USER_ID,
+    get_owner_email,
+    verify_session_token,
+)
 
 
-async def get_current_user(user: dict = Depends(require_user)) -> dict:
-    """Return the app-level user doc, creating it (with Clerk email) on first sign-in."""
-    uid = user["user_id"]
-    doc = await db.users.find_one({"user_id": uid}, {"_id": 0})
-    if doc is None:
-        email, name = "", ""
-        sk = os.environ.get("CLERK_SECRET_KEY")
-        if sk:
-            try:
-                r = http.get(
-                    f"https://api.clerk.com/v1/users/{uid}", timeout=10,
-                    headers={"Authorization": f"Bearer {sk}", "User-Agent": "emergent-app"},
-                )
-                if r.ok:
-                    u = r.json()
-                    primary = u.get("primary_email_address_id")
-                    email = next((e["email_address"] for e in u.get("email_addresses", [])
-                                  if e.get("id") == primary and e.get("verification", {}).get("status") == "verified"),
-                                 "")
-                    if not email:
-                        email = next((e["email_address"] for e in u.get("email_addresses", [])), "")
-                    name = " ".join(filter(None, [u.get("first_name"), u.get("last_name")])).strip()
-            except Exception:
-                pass
-        new_doc = {"user_id": uid, "email": email, "name": name, "created_at": utc_now_iso()}
-        try:
-            await db.users.insert_one(new_doc.copy())
-        except DuplicateKeyError:
-            pass  # a parallel first request inserted it; re-read below
-        doc = await db.users.find_one({"user_id": uid}, {"_id": 0})
-    return doc
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def get_current_user(request: Request) -> dict:
+    """Dependency for authenticated routes: reads the session cookie,
+    Bearer token header, or X-ApplyPilot-Token header.
+    Returns the user document (stable user_id='owner' for single-user auth)."""
+    # 1. Extension token support via header
+    ext_token = request.headers.get("x-applypilot-token", "").strip()
+    if ext_token:
+        doc = await db.extension_tokens.find_one(
+            {"token_hash": _token_hash(ext_token), "revoked": {"$ne": True}},
+            {"_id": 0},
+        )
+        if not doc:
+            raise HTTPException(status_code=401, detail="Browser helper token is invalid or revoked")
+        await db.extension_tokens.update_one(
+            {"token_hash": doc["token_hash"]},
+            {"$set": {"last_used_at": utc_now_iso()}},
+        )
+        user = await db.users.find_one({"user_id": doc["user_id"]}, {"_id": 0})
+        if user:
+            return user
+        return {"user_id": doc["user_id"], "email": get_owner_email(), "name": "Owner"}
+
+    # 2. Session cookie or Authorization: Bearer
+    token = request.cookies.get(COOKIE_NAME, "")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not signed in")
+
+    claims = verify_session_token(token)
+    uid = claims.get("sub", OWNER_USER_ID)
+    owner_email = claims.get("email") or get_owner_email()
+
+    user = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    if not user:
+        user = {
+            "user_id": uid,
+            "email": owner_email,
+            "name": "Owner",
+            "created_at": utc_now_iso(),
+        }
+        await db.users.update_one({"user_id": uid}, {"$set": user}, upsert=True)
+    return user
 
 
 async def get_owned(collection: str, doc_id: str, user_id: str) -> dict:

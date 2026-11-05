@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-import clerk_auth
 from db import db, utc_now_iso
 from deps import get_current_user, get_owned
 from storage import get_object, put_object
@@ -45,14 +44,6 @@ async def role_payload(user_id: str, profile: dict) -> dict:
     ).sort("version_no", -1).to_list(100)
     active = next((clean_version(v) for v in versions if v.get("active")), None)
     return {**profile, "active_resume": active, "version_count": len(versions)}
-
-
-def token_from(request: Request, auth: Optional[str]) -> str:
-    header = request.headers.get("authorization", "")
-    token = header[7:] if header.lower().startswith("bearer ") else (auth or "")
-    if not token:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    return token
 
 
 @router.get("/roles")
@@ -198,9 +189,7 @@ async def delete_version(role_id: str, version_id: str, user: dict = Depends(get
     return {"ok": True}
 
 
-async def _serve_version(request: Request, version_id: str, auth: Optional[str], inline: bool):
-    claims = clerk_auth.verify_session_token(token_from(request, auth))
-    uid = claims["sub"]
+async def _serve_version(version_id: str, uid: str, inline: bool):
     version = await db.resume_versions.find_one(
         {"id": version_id, "user_id": uid, "is_deleted": {"$ne": True}}, {"_id": 0})
     if not version:
@@ -217,10 +206,10 @@ async def _serve_version(request: Request, version_id: str, auth: Optional[str],
 
 
 @router.get("/resumes/{version_id}/download")
-async def download_resume(version_id: str, request: Request, auth: Optional[str] = None):
-    return await _serve_version(request, version_id, auth, inline=False)
+async def download_resume(version_id: str, user: dict = Depends(get_current_user)):
+    return await _serve_version(version_id, user["user_id"], inline=False)
 
 
 @router.get("/resumes/{version_id}/preview")
-async def preview_resume(version_id: str, request: Request, auth: Optional[str] = None):
-    return await _serve_version(request, version_id, auth, inline=True)
+async def preview_resume(version_id: str, user: dict = Depends(get_current_user)):
+    return await _serve_version(version_id, user["user_id"], inline=True)

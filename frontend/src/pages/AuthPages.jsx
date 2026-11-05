@@ -1,6 +1,12 @@
-import { Mail } from "lucide-react";
-import { SignIn, SignUp } from "@clerk/react";
+import React, { useState } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
+import { Lock, Mail, Loader2 } from "lucide-react";
 import { Brand } from "@/components/layout/AppShell";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useAuth } from "@/context/AuthContext";
 
 function AuthLayout({ children, title, subtitle }) {
   return (
@@ -33,19 +39,88 @@ function AuthLayout({ children, title, subtitle }) {
 }
 
 export function SignInPage() {
+  const { user, login } = useAuth();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (user) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      await login(email, password);
+      navigate("/", { replace: true });
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Invalid email or password. Please try again.";
+      setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <AuthLayout title="Welcome back" subtitle="Sign in to your ApplyPilot workspace">
-      <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" withSignUp />
+    <AuthLayout title="Owner Sign In" subtitle="Sign in to your ApplyPilot workspace">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
+        {error && (
+          <Alert variant="destructive" className="py-2.5">
+            <AlertDescription className="text-xs">{error}</AlertDescription>
+          </Alert>
+        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="email">Owner Email</Label>
+          <div className="relative">
+            <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="email"
+              type="email"
+              placeholder="owner@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="pl-9"
+              autoComplete="email"
+              required
+            />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="password">Password</Label>
+          <div className="relative">
+            <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="pl-9"
+              autoComplete="current-password"
+              required
+            />
+          </div>
+        </div>
+        <Button type="submit" className="w-full mt-2" disabled={submitting}>
+          {submitting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing In...
+            </>
+          ) : (
+            "Sign In"
+          )}
+        </Button>
+      </form>
     </AuthLayout>
   );
 }
 
 export function SignUpPage() {
-  return (
-    <AuthLayout title="Create your account" subtitle="Start running your job search on autopilot">
-      <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" />
-    </AuthLayout>
-  );
+  return <Navigate to="/sign-in" replace />;
 }
 
 export default SignInPage;
