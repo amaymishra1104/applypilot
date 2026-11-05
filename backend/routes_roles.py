@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from db import db, utc_now_iso
 from deps import get_current_user, get_owned
-from storage import get_object, put_object
+from storage import get_object, put_object, object_exists
 
 router = APIRouter(prefix="/api", tags=["roles"])
 
@@ -24,7 +24,12 @@ class RoleIn(BaseModel):
 
 
 def clean_version(v: dict) -> dict:
-    return {k: val for k, val in v.items() if k not in ("resume_text",)}
+    res = {k: val for k, val in v.items() if k not in ("resume_text",)}
+    storage_path = v.get("storage_path") or ""
+    if not storage_path or not object_exists(storage_path):
+        res["reupload_required"] = True
+        res["reupload_warning"] = "Resume file missing from storage; re-upload required"
+    return res
 
 
 def extract_pdf_text(data: bytes) -> str:
@@ -43,7 +48,11 @@ async def role_payload(user_id: str, profile: dict) -> dict:
         {"user_id": user_id, "role_profile_id": profile["id"], "is_deleted": {"$ne": True}}, {"_id": 0},
     ).sort("version_no", -1).to_list(100)
     active = next((clean_version(v) for v in versions if v.get("active")), None)
-    return {**profile, "active_resume": active, "version_count": len(versions)}
+    payload = {**profile, "active_resume": active, "version_count": len(versions)}
+    if active and active.get("reupload_required"):
+        payload["reupload_required"] = True
+        payload["reupload_warning"] = "Active resume file is missing from storage; re-upload required"
+    return payload
 
 
 @router.get("/roles")
@@ -196,6 +205,8 @@ async def _serve_version(version_id: str, uid: str, inline: bool):
         raise HTTPException(status_code=404, detail="Resume version not found")
     try:
         data, _ = get_object(version["storage_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found; re-upload required")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not load file: {exc}")
     disposition = "inline" if inline else "attachment"

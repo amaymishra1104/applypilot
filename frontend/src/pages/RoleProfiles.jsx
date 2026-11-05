@@ -213,6 +213,11 @@ function VersionsSheet({ role, open, onClose, onChanged }) {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{v.name}</p>
                         <p className="text-xs text-muted-foreground">v{v.version_no} · {Math.round(v.size / 1024)} KB · {new Date(v.created_at).toLocaleDateString()}</p>
+                        {v.reupload_required && (
+                          <p className="text-xs font-medium text-destructive mt-1" data-testid={`reupload-warning-${v.version_no}`}>
+                            ⚠️ File missing — re-upload required
+                          </p>
+                        )}
                       </div>
                       {v.active ? <Badge className="bg-primary/15 text-primary border-primary/30">Active</Badge> : null}
                     </div>
@@ -332,6 +337,11 @@ export default function RoleProfiles() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{role.active_resume.name}</p>
                         <p className="text-xs text-muted-foreground">Active · v{role.active_resume.version_no} · {Math.round(role.active_resume.size / 1024)} KB</p>
+                        {role.active_resume.reupload_required && (
+                          <p className="text-xs font-medium text-destructive mt-1" data-testid="reupload-warning">
+                            ⚠️ File not found — re-upload required
+                          </p>
+                        )}
                       </div>
                     </div>
                   ) : (
