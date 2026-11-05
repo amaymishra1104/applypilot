@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -85,7 +85,29 @@ async def ensure_indexes() -> None:
                 logger.error("ensure_indexes(%s.%s): %s", collection, model.document["name"], exc)
 
 
-app = FastAPI(title="ApplyPilot API")
+from scheduler import start_scheduler, stop_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    validate_owner_config()
+    index_task = asyncio.create_task(ensure_indexes())
+    storage_task = asyncio.create_task(_init_storage())
+    oauth_task = asyncio.create_task(_cleanup_oauth_states())
+    bulk_task = asyncio.create_task(resume_running_bulk_jobs())
+    start_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
+        for task in (index_task, storage_task, oauth_task, bulk_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        client.close()
+
+
+app = FastAPI(title="ApplyPilot API", lifespan=lifespan)
 
 api_router = APIRouter(prefix="/api")
 
@@ -113,15 +135,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    validate_owner_config()
-    app.state.index_task = asyncio.create_task(ensure_indexes())
-    asyncio.create_task(_init_storage())
-    asyncio.create_task(_cleanup_oauth_states())
-    asyncio.create_task(resume_running_bulk_jobs())
 
 
 async def resume_running_bulk_jobs(user_id: str | None = None) -> list[str]:
@@ -157,13 +170,3 @@ async def _cleanup_oauth_states():
         await db.oauth_states.delete_many({"expires_at": {"$lt": cutoff}})
     except Exception as exc:
         logger.error("oauth_states cleanup failed: %s", exc)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    task = getattr(app.state, "index_task", None)
-    if task:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-    client.close()
