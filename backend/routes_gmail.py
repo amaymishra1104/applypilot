@@ -69,19 +69,27 @@ async def gmail_start(body: StartIn, request: Request, user: dict = Depends(get_
 
 @router.get("/gmail/callback")
 async def gmail_callback(code: str = "", state: str = "", error: str = ""):
+    frontend_base = "http://localhost:3000"
+    if state:
+        st = await db.oauth_states.find_one({"state": state})
+        if st and st.get("origin") and st["origin"].startswith("http"):
+            frontend_base = st["origin"].rstrip("/")
+
     if error:
-        return RedirectResponse("/gmail?error=" + error)
+        return RedirectResponse(f"{frontend_base}/gmail?error={error}")
     if not code or not state:
-        return RedirectResponse("/gmail?error=missing_code")
+        return RedirectResponse(f"{frontend_base}/gmail?error=missing_code")
     try:
         origin = await gmail_service.handle_callback(code, state)
+        if origin and origin.startswith("http"):
+            frontend_base = origin.rstrip("/")
     except HTTPException as exc:
-        return RedirectResponse(f"/gmail?error={exc.detail}")
-    except Exception:
-        return RedirectResponse("/gmail?error=oauth_failed")
-    if origin.startswith("http"):
-        return RedirectResponse(origin + "/gmail?connected=1")
-    return RedirectResponse("/gmail?connected=1")
+        logger.error("Gmail OAuth callback HTTP error: %s", exc.detail)
+        return RedirectResponse(f"{frontend_base}/gmail?error={exc.detail}")
+    except Exception as exc:
+        logger.exception("Gmail OAuth callback failed unexpectedly: %s", exc)
+        return RedirectResponse(f"{frontend_base}/gmail?error=oauth_failed")
+    return RedirectResponse(f"{frontend_base}/gmail?connected=1")
 
 
 @router.post("/gmail/disconnect")

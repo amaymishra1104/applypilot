@@ -54,6 +54,7 @@ async def start_flow(user_id: str, redirect_uri: str, frontend_origin: str) -> s
         "user_id": user_id,
         "redirect_uri": redirect_uri,
         "origin": frontend_origin,
+        "code_verifier": getattr(flow, "code_verifier", None),
         "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
     })
     return url
@@ -72,6 +73,8 @@ async def handle_callback(code: str, state: str) -> str:
     client_id, client_secret = await get_google_config(user_id)
     flow = Flow.from_client_config(_client_config(client_id, client_secret), scopes=SCOPES,
                                    redirect_uri=doc["redirect_uri"])
+    if doc.get("code_verifier"):
+        flow.code_verifier = doc["code_verifier"]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         flow.fetch_token(code=code)
