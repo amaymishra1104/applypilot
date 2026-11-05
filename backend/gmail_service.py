@@ -109,26 +109,56 @@ def build_service(creds):
 async def get_creds(user_id: str):
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
+    from google.auth.exceptions import RefreshError
 
     conn = await db.gmail_connections.find_one({"user_id": user_id}, {"_id": 0})
     if not conn:
         return None
+    if conn.get("status") == "reauth_required":
+        return None
+
+    cfg_client_id, cfg_client_secret = await get_google_config(user_id)
+    client_id = conn.get("client_id") or cfg_client_id
+    client_secret = cfg_client_secret
+
     creds = Credentials(
         token=decrypt(conn.get("access_token", "")),
         refresh_token=decrypt(conn["refresh_token"]) if conn.get("refresh_token") else None,
-        token_uri=conn.get("token_uri"),
-        client_id=conn.get("client_id"),
-        client_secret=decrypt(conn.get("client_secret", "")) if conn.get("client_secret") else None,
+        token_uri=conn.get("token_uri") or "https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
         scopes=conn.get("scopes", SCOPES),
     )
     expires = parse_iso(conn.get("expires_at"))
     if expires and expires <= datetime.now(timezone.utc) and creds.refresh_token:
-        await asyncio.to_thread(creds.refresh, Request())
-        await db.gmail_connections.update_one(
-            {"user_id": user_id},
-            {"$set": {"access_token": encrypt(creds.token),
-                      "expires_at": (creds.expiry or datetime.now(timezone.utc)).isoformat()}},
-        )
+        try:
+            await asyncio.to_thread(creds.refresh, Request())
+            await db.gmail_connections.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "access_token": encrypt(creds.token),
+                    "expires_at": (creds.expiry or datetime.now(timezone.utc)).isoformat(),
+                    "status": "connected",
+                    "last_refresh_error": None,
+                }},
+            )
+        except RefreshError as exc:
+            logger.error("Gmail token refresh rejected for user %s: %s", user_id, exc)
+            await db.gmail_connections.update_one(
+                {"user_id": user_id},
+                {"$set": {"status": "reauth_required", "last_refresh_error": str(exc)[:200]}},
+            )
+            return None
+        except Exception as exc:
+            if "invalid_grant" in str(exc).lower():
+                logger.error("Gmail token refresh rejected (invalid_grant) for user %s: %s", user_id, exc)
+                await db.gmail_connections.update_one(
+                    {"user_id": user_id},
+                    {"$set": {"status": "reauth_required", "last_refresh_error": str(exc)[:200]}},
+                )
+                return None
+            logger.warning("Temporary error refreshing Gmail token for user %s: %s", user_id, exc)
+            return None
     return creds
 
 

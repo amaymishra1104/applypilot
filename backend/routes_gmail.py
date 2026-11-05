@@ -24,10 +24,15 @@ async def gmail_status(request: Request, user: dict = Depends(get_current_user))
     conn = await db.gmail_connections.find_one({"user_id": user["user_id"]}, {"_id": 0})
     client_id, _ = await gmail_service.get_google_config(user["user_id"])
     if not conn:
-        return {"connected": False, "google_configured": bool(client_id),
+        return {"connected": False, "status": "disconnected", "reauth_required": False,
+                "google_configured": bool(client_id),
                 "redirect_uri": f"{external_base_url(request)}/api/gmail/callback"}
+    conn_status = conn.get("status", "connected")
     return {
-        "connected": True,
+        "connected": conn_status == "connected",
+        "status": conn_status,
+        "reauth_required": conn_status == "reauth_required",
+        "last_refresh_error": conn.get("last_refresh_error"),
         "email": conn.get("email", ""),
         "connected_at": conn.get("connected_at"),
         "scopes": conn.get("scopes", []),

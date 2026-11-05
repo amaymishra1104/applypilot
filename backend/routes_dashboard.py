@@ -76,5 +76,5 @@ async def dashboard(user: dict = Depends(get_current_user)):
             "daily_limit": settings.get("autopilot", {}).get("max_per_day", 10),
         },
         "autopilot": settings.get("autopilot", {}),
-        "gmail_connected": bool(await db.gmail_connections.find_one({"user_id": uid}, {"_id": 0})),
+        "gmail_connected": bool(await db.gmail_connections.find_one({"user_id": uid, "status": "connected"}, {"_id": 0})),
     }

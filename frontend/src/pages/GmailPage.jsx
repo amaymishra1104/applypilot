@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2, Copy, KeyRound, Link2, Mail, Plug, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, KeyRound, Link2, Mail, Plug, Unplug } from "lucide-react";
 import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,7 +80,28 @@ export default function GmailPage() {
             <CardTitle className="flex items-center gap-2 text-base"><Mail className="h-4 w-4 text-primary" /> Connection status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {status.connected ? (
+            {status.reauth_required ? (
+              <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4" data-testid="gmail-reauth-panel">
+                <p className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-4 w-4" />
+                  Re-authentication required for {status.email}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Your Google authorization has expired or was revoked. Please reconnect your account to resume sending and inbox scanning.
+                </p>
+                {status.last_refresh_error && (
+                  <p className="text-xs text-red-500 font-mono">Error: {status.last_refresh_error}</p>
+                )}
+                <div className="flex gap-2">
+                  <Button onClick={connect} disabled={connecting} data-testid="gmail-reconnect-button">
+                    <Plug className="mr-2 h-4 w-4" /> Reconnect Gmail
+                  </Button>
+                  <Button variant="outline" onClick={disconnect} className="text-red-500 border-red-500/30" data-testid="gmail-disconnect-button">
+                    <Unplug className="mr-2 h-4 w-4" /> Disconnect
+                  </Button>
+                </div>
+              </div>
+            ) : status.connected ? (
               <div className="space-y-3" data-testid="gmail-connected-panel">
                 <p className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />

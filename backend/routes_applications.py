@@ -190,7 +190,7 @@ async def queue_stats(user: dict = Depends(get_current_user)):
     settings = await get_settings(uid)
     return {"counts": counts, "sent_today": await count_sent_today(uid),
             "autopilot": settings.get("autopilot", {}), "gmail_connected": bool(
-                await db.gmail_connections.find_one({"user_id": uid}, {"_id": 0}))}
+                await db.gmail_connections.find_one({"user_id": uid, "status": "connected"}, {"_id": 0}))}
 
 
 @router.get("/applications/{app_id}")

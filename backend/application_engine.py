@@ -160,7 +160,7 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
         uid = settings["user_id"]
         summary["users"] += 1
         conn = await db.gmail_connections.find_one({"user_id": uid}, {"_id": 0})
-        if not conn:
+        if not conn or conn.get("status") == "reauth_required" or conn.get("status") != "connected":
             summary["skipped"] += 1
             continue
         autop = settings.get("autopilot", {})
