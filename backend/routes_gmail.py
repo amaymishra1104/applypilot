@@ -11,12 +11,19 @@ from deps import get_current_user
 router = APIRouter(prefix="/api", tags=["gmail"])
 
 
+import os
+
 def external_base_url(request: Request) -> str:
-    proto = request.headers.get("x-forwarded-proto", "https")
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
-    if not host:
-        proto, host = request.url.scheme, request.url.netloc
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
     return f"{proto}://{host}"
+
+
+def get_redirect_uri(request: Request) -> str:
+    env_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+    if env_uri:
+        return env_uri
+    return f"{external_base_url(request)}/api/gmail/callback"
 
 
 @router.get("/gmail/status")
@@ -26,7 +33,7 @@ async def gmail_status(request: Request, user: dict = Depends(get_current_user))
     if not conn:
         return {"connected": False, "status": "disconnected", "reauth_required": False,
                 "google_configured": bool(client_id),
-                "redirect_uri": f"{external_base_url(request)}/api/gmail/callback"}
+                "redirect_uri": get_redirect_uri(request)}
     conn_status = conn.get("status", "connected")
     return {
         "connected": conn_status == "connected",
@@ -37,7 +44,7 @@ async def gmail_status(request: Request, user: dict = Depends(get_current_user))
         "connected_at": conn.get("connected_at"),
         "scopes": conn.get("scopes", []),
         "google_configured": bool(client_id),
-        "redirect_uri": f"{external_base_url(request)}/api/gmail/callback",
+        "redirect_uri": get_redirect_uri(request),
     }
 
 
@@ -53,7 +60,7 @@ async def gmail_start(body: StartIn, request: Request, user: dict = Depends(get_
     origin = body.frontend_origin.strip()
     if origin and not origin.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid origin")
-    redirect_uri = f"{external_base_url(request)}/api/gmail/callback"
+    redirect_uri = get_redirect_uri(request)
     url = await gmail_service.start_flow(user["user_id"], redirect_uri, origin)
     if not url:
         raise HTTPException(status_code=502, detail="Could not start Google OAuth flow")
