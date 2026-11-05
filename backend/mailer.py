@@ -1,31 +1,42 @@
-"""Managed email (Emergent/Resend) used ONLY for notifications to the account
-owner (server-side recipients + templates). Application emails to HR contacts
-are sent exclusively through the user's own connected Gmail account."""
+"""Notification mailer delivering account owner notifications (replies, reminders, digests)
+via:
+  1) Connected Gmail account (if owner has connected Gmail),
+  2) SMTP (if SMTP_HOST is configured),
+  3) Log-only fallback with a visible warning.
 
+All external application emails to HR contacts are sent exclusively via connected Gmail.
+"""
+
+import asyncio
+from html import escape
+from html.parser import HTMLParser
+import ipaddress
 import logging
 import os
 import re
-import ipaddress
-from html import escape
-from html.parser import HTMLParser
+import smtplib
+import uuid
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from urllib.parse import urlparse
 
-import httpx
 from dotenv import load_dotenv
+
+from db import db
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "ApplyPilot")
 EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO")
 
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
-_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
-             "send us your password", "enter your password below", "confirm your card number",
-             "your full card number", "seed phrase", "recovery phrase", "verify your card",
-             "social security number", "confirm your bank details")
+_CRED_ASK = (
+    "reply with your password", "reply with the code", "send your password", "cvv",
+    "send us your password", "enter your password below", "confirm your card number",
+    "your full card number", "seed phrase", "recovery phrase", "verify your card",
+    "social security number", "confirm your bank details"
+)
 _HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
 
 
@@ -94,33 +105,111 @@ def _assert_safe_email(subject: str, html: str) -> None:
                 raise ValueError(f"Anchor text {m.group(1)!r} ≠ real link host {real!r} (G3)")
 
 
-async def send_email(*, to: str, subject: str, html: str, reply_to: str | None = None) -> str | None:
-    _assert_safe_email(subject, html)
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+def html_to_plain_text(html: str) -> str:
+    text = re.sub(r"<style.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<script.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</p>", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</tr>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</td>", "  ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def _send_smtp_sync(to: str, subject: str, html: str, text: str, reply_to: str | None = None) -> str:
+    host = os.environ.get("SMTP_HOST", "")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    from_addr = os.environ.get("SMTP_FROM") or os.environ.get("EMAIL_FROM") or (f"{EMAIL_FROM_NAME} <{user}>" if user else "notifications@applypilot.local")
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = from_addr
+    msg["To"] = to
+    msg["Subject"] = subject
     if reply_to or EMAIL_REPLY_TO:
-        payload["contact_email"] = reply_to or EMAIL_REPLY_TO
+        msg["Reply-To"] = reply_to or EMAIL_REPLY_TO
+
+    msg.attach(MIMEText(text or "", "plain"))
+    if html:
+        msg.attach(MIMEText(html, "html"))
+
+    use_ssl = port == 465 or os.environ.get("SMTP_USE_SSL", "false").lower() in ("true", "1")
+    use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in ("true", "1")
+
+    if use_ssl:
+        server = smtplib.SMTP_SSL(host, port, timeout=30)
+    else:
+        server = smtplib.SMTP(host, port, timeout=30)
+        if use_tls:
+            server.starttls()
+
+    if user and password:
+        server.login(user, password)
+
+    server.send_message(msg)
+    server.quit()
+    return f"smtp_{uuid.uuid4().hex[:12]}"
+
+
+async def send_email(
+    *,
+    to: str,
+    subject: str,
+    html: str,
+    user_id: str | None = None,
+    reply_to: str | None = None,
+) -> str | None:
+    """Send notification email via: 1) connected Gmail, 2) SMTP, 3) log-only fallback."""
+    _assert_safe_email(subject, html)
+    plain_text = html_to_plain_text(html)
+    uid = user_id or "owner"
+
+    # Channel 1: Connected Gmail account
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{EMAIL_BASE_URL}/api/v1/email/send",
-                headers={"X-Email-Key": EMAIL_KEY},
-                json=payload,
+        conn = await db.gmail_connections.find_one({"user_id": uid})
+        if conn and conn.get("status") == "connected":
+            import gmail_service
+            msg_id, _ = await gmail_service.send_gmail_email(
+                user_id=uid,
+                to=to,
+                subject=subject,
+                body_text=plain_text,
+                html_body=html,
+                reply_to=reply_to or EMAIL_REPLY_TO,
             )
-        resp.raise_for_status()
-        return resp.json().get("id")
-    except httpx.HTTPStatusError as e:
+            if msg_id:
+                logger.info("Delivered notification via connected Gmail to %s (message %s)", to, msg_id)
+                return f"gmail_{msg_id}"
+    except Exception as exc:
+        logger.warning("Failed to send notification via Gmail for user %s: %s. Trying SMTP fallback.", uid, exc)
+
+    # Channel 2: SMTP server
+    smtp_host = os.environ.get("SMTP_HOST")
+    if smtp_host:
         try:
-            code = e.response.json().get("code", "")
-        except ValueError:
-            code = ""
-        if code in ("insufficient_credits", "integration_disabled", "daily_limit_reached"):
-            logger.warning(f"Email paused: {code} ({e.response.status_code})")
-            return None
-        logger.error(f"Email send failed: {e.response.status_code} {e.response.text[:200]}")
-        return None
-    except Exception as e:
-        logger.error(f"Email send error: {e}")
-        return None
+            message_id = await asyncio.to_thread(
+                _send_smtp_sync,
+                to=to,
+                subject=subject,
+                html=html,
+                text=plain_text,
+                reply_to=reply_to,
+            )
+            logger.info("Delivered notification via SMTP to %s", to)
+            return message_id
+        except Exception as exc:
+            logger.warning("Failed to send notification via SMTP to %s: %s. Falling back to log.", to, exc)
+
+    # Channel 3: Log-only fallback with visible warning
+    logger.warning(
+        "Notification delivery: neither connected Gmail nor SMTP is available or working. "
+        "[NOTIFICATION LOG ONLY] To: %s | Subject: %s | Body:\n%s",
+        to,
+        subject,
+        plain_text[:300],
+    )
+    return f"log_only_{uuid.uuid4().hex[:12]}"
 
 
 def _wrap(title: str, body_html: str) -> str:
@@ -133,36 +222,53 @@ def _wrap(title: str, body_html: str) -> str:
 
 
 async def notify_user(user: dict, kind: str, context: dict) -> str | None:
-    """Notification to the signed-in user's own (verified Clerk) email. Best effort."""
+    """Notification to the account owner's email address."""
     to = (user or {}).get("email", "")
     if not to:
-        return
+        return None
+    uid = (user or {}).get("user_id") or "owner"
+
     if kind == "application_sent":
         subject = f"Application sent: {context.get('company', '')}"
-        html = _wrap("Application sent", f"<p>Your application to <strong>{escape(context.get('company', ''))}</strong> "
-                                         f"({escape(context.get('role', ''))}) was sent with resume "
-                                         f"<strong>{escape(context.get('resume', ''))}</strong>.</p>")
+        html = _wrap(
+            "Application sent",
+            f"<p>Your application to <strong>{escape(context.get('company', ''))}</strong> "
+            f"({escape(context.get('role', ''))}) was sent with resume "
+            f"<strong>{escape(context.get('resume', ''))}</strong>.</p>",
+        )
     elif kind == "reply_received":
         subject = f"HR reply from {context.get('company', '')}"
-        html = _wrap("New HR reply", f"<p>{escape(context.get('company', ''))} replied to your application "
-                                     f"for <strong>{escape(context.get('role', ''))}</strong>.</p>"
-                                     f"<p><em>{escape(context.get('summary', ''))}</em></p>")
+        html = _wrap(
+            "New HR reply",
+            f"<p>{escape(context.get('company', ''))} replied to your application "
+            f"for <strong>{escape(context.get('role', ''))}</strong>.</p>"
+            f"<p><em>{escape(context.get('summary', ''))}</em></p>",
+        )
     elif kind == "followup_ready":
         subject = f"Follow-up ready for review: {context.get('company', '')}"
-        html = _wrap("Follow-up ready", f"<p>A follow-up draft for <strong>{escape(context.get('company', ''))}</strong> "
-                                        f"is ready. Review and approve it in your Application Tracker.</p>")
+        html = _wrap(
+            "Follow-up ready",
+            f"<p>A follow-up draft for <strong>{escape(context.get('company', ''))}</strong> "
+            "is ready. Review and approve it in your Application Tracker.</p>",
+        )
     elif kind == "autopilot_paused":
         subject = "Auto-Pilot emergency stop triggered"
         html = _wrap("Auto-Pilot stopped", f"<p>{escape(context.get('reason', ''))}</p>")
     elif kind == "interview_reminder":
         subject = f"Interview reminder: {context.get('company', '')}"
-        html = _wrap("Interview coming up", f"<p>Your interview with <strong>{escape(context.get('company', ''))}</strong> "
-                                            f"is scheduled for <strong>{escape(context.get('when', ''))}</strong>.</p>"
-                                            f"<p>{escape(context.get('notes', ''))}</p>")
+        html = _wrap(
+            "Interview coming up",
+            f"<p>Your interview with <strong>{escape(context.get('company', ''))}</strong> "
+            f"is scheduled for <strong>{escape(context.get('when', ''))}</strong>.</p>"
+            f"<p>{escape(context.get('notes', ''))}</p>",
+        )
     elif kind == "send_failed":
         subject = f"Send failed: {context.get('company', '')}"
-        html = _wrap("Send failed", f"<p>Sending to {escape(context.get('company', ''))} failed after retries: "
-                                    f"{escape(context.get('error', ''))}</p>")
+        html = _wrap(
+            "Send failed",
+            f"<p>Sending to {escape(context.get('company', ''))} failed after retries: "
+            f"{escape(context.get('error', ''))}</p>",
+        )
     elif kind == "board_digest":
         apps = context.get("apps", [])
         subject = f"{len(apps)} new board job{'s' if len(apps) != 1 else ''} waiting for your approval"
@@ -171,12 +277,17 @@ async def notify_user(user: dict, kind: str, context: dict) -> str | None:
             f' - {escape(a.get("company") or "Company not listed")}<br><span style="color:#555;font-size:13px">'
             f'{escape(a.get("board", ""))} · {int(a.get("match_score", 0))}% match · {escape(a.get("role_profile_title", ""))}</span>'
             + (f' · <a href="{escape(a["job_url"])}">View job</a>' if str(a.get("job_url", "")).startswith("https://") else "")
-            + "</td></tr>" for a in apps[:15])
+            + "</td></tr>"
+            for a in apps[:15]
+        )
         more = f"<p>And {len(apps) - 15} more.</p>" if len(apps) > 15 else ""
-        html = _wrap("Your morning job board digest",
-                     f'<table role="presentation" width="100%">{rows}</table>{more}'
-                     "<p>Open <strong>Job Boards Auto-Apply</strong> in ApplyPilot to approve the ones you want - "
-                     "the browser helper submits them after approval.</p>")
+        html = _wrap(
+            "Your morning job board digest",
+            f'<table role="presentation" width="100%">{rows}</table>{more}'
+            "<p>Open <strong>Job Boards Auto-Apply</strong> in ApplyPilot to approve the ones you want - "
+            "the browser helper submits them after approval.</p>",
+        )
     else:
         return None
-    return await send_email(to=to, subject=subject, html=html)
+
+    return await send_email(to=to, subject=subject, html=html, user_id=uid)

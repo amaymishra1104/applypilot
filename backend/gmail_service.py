@@ -164,18 +164,24 @@ async def get_creds(user_id: str):
 
 async def send_gmail_email(user_id: str, to: str, subject: str, body_text: str,
                            attachment_bytes: bytes | None = None, attachment_filename: str | None = None,
-                           reply_to: str | None = None) -> tuple[str, str | None]:
+                           reply_to: str | None = None, html_body: str | None = None) -> tuple[str, str | None]:
     creds = await get_creds(user_id)
     if not creds:
         raise RuntimeError("Gmail not connected")
 
     def _send() -> dict:
-        msg = MIMEMultipart()
+        msg = MIMEMultipart("mixed")
         msg["to"] = to
         msg["subject"] = subject
         if reply_to:
             msg["reply-to"] = reply_to
-        msg.attach(MIMEText(body_text or "", "plain"))
+
+        alt_part = MIMEMultipart("alternative")
+        alt_part.attach(MIMEText(body_text or "", "plain"))
+        if html_body:
+            alt_part.attach(MIMEText(html_body, "html"))
+        msg.attach(alt_part)
+
         if attachment_bytes:
             part = MIMEApplication(attachment_bytes, _subtype="pdf")
             part.add_header("Content-Disposition", "attachment", filename=attachment_filename or "resume.pdf")
