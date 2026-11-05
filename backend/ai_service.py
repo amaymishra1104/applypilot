@@ -85,7 +85,7 @@ async def match_opportunity(job: dict, profiles: list[dict], model: str | None =
             "skills": p.get("skills", []),
             "experience_required": p.get("experience_required") or "",
             "notes": (p.get("notes") or "")[:300],
-            "resume_excerpt": (p.get("resume_text") or "")[:1500],
+            "resume_excerpt": (p.get("resume_text") or "")[:3000],
             "has_resume": bool(p.get("resume_text")),
         })
     prompt = (
@@ -114,7 +114,7 @@ async def ats_analyze(resume_text: str, job: dict, model: str | None = None) -> 
         f"JOB: {job.get('job_title', '')} at {job.get('company_name', '')}\n"
         f"Required skills: {', '.join(job.get('required_skills', []))}\n"
         f"Description: {(job.get('description_summary') or job.get('job_description', ''))[:2500]}\n\n"
-        f"RESUME:\n{resume_text[:6000]}\n\n"
+        f"RESUME:\n{resume_text[:12000]}\n\n"
         'Return JSON: {"score": int 0-100, "matched_keywords": [str], "missing_keywords": [str], '
         '"suggestions": [str] (max 4 concrete, honest suggestions), "verdict": str (one honest sentence)}.'
     )

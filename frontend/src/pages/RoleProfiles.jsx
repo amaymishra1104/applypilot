@@ -109,7 +109,11 @@ function UploadDialog({ open, onClose, role, onUploaded }) {
       fd.append("file", file);
       fd.append("name", name || file.name.replace(/\.pdf$/i, ""));
       const res = await api.post(`/roles/${role.id}/resumes`, fd);
-      toast.success(`Resume uploaded as version ${res.data.active_resume?.version_no || ""} (now active)`);
+      if (res.data?.warning) {
+        toast.warning(res.data.warning, { duration: 7000 });
+      } else {
+        toast.success(`Resume uploaded as version ${res.data.active_resume?.version_no || ""} (now active)`);
+      }
       onUploaded(res.data);
       onClose();
     } catch (e) {

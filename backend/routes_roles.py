@@ -33,8 +33,8 @@ def extract_pdf_text(data: bytes) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(data))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages[:8])
-        return text[:6000].strip()
+        text = "\n".join((page.extract_text() or "") for page in reader.pages[:15])
+        return text[:15000].strip()
     except Exception:
         return ""
 
@@ -128,6 +128,12 @@ async def upload_resume(role_id: str, file: UploadFile = File(...), name: str = 
     storage_path = result.get("path", storage_path)
     count = await db.resume_versions.count_documents(
         {"user_id": user["user_id"], "role_profile_id": role_id, "is_deleted": {"$ne": True}})
+    extracted = extract_pdf_text(data)
+    warning = None
+    if len(extracted) < 300:
+        warning = ("The uploaded PDF yielded very little text (< 300 characters). "
+                   "It may be scanned or image-based, which will produce poor AI matches.")
+
     version = {
         "id": uuid.uuid4().hex,
         "user_id": user["user_id"],
@@ -139,7 +145,7 @@ async def upload_resume(role_id: str, file: UploadFile = File(...), name: str = 
         "storage_path": storage_path,
         "content_type": "application/pdf",
         "active": True,
-        "resume_text": extract_pdf_text(data),
+        "resume_text": extracted,
         "is_deleted": False,
         "created_at": utc_now_iso(),
     }
@@ -147,7 +153,10 @@ async def upload_resume(role_id: str, file: UploadFile = File(...), name: str = 
         {"user_id": user["user_id"], "role_profile_id": role_id}, {"$set": {"active": False}})
     await db.resume_versions.insert_one(version.copy())
     profile = await db.role_profiles.find_one({"id": role_id, "user_id": user["user_id"]}, {"_id": 0})
-    return await role_payload(user["user_id"], profile)
+    payload = await role_payload(user["user_id"], profile)
+    if warning:
+        payload["warning"] = warning
+    return payload
 
 
 @router.get("/roles/{role_id}/resumes")
