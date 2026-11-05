@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(BaseLLMProvider):
-    MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.5-preview"]
-    DEFAULT_MODEL = "gpt-4o-mini"
+    MODELS = ["gpt-5", "gpt-5.4", "gpt-4o", "gpt-4o-mini"]
+    DEFAULT_MODEL = "gpt-5"
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)

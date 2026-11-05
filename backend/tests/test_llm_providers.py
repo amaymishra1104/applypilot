@@ -242,23 +242,23 @@ def test_models_config_and_provider_switching(monkeypatch):
     assert get_default_model() == "gemini-2.5-flash"
     gemini_models = get_available_models()
     assert "gemini-2.5-flash" in gemini_models
-    assert "gemini-1.5-pro" in gemini_models
+    assert "gemini-2.5-pro" in gemini_models
 
     # OpenAI selectable
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    assert get_default_model() == "gpt-4o-mini"
+    assert get_default_model() == "gpt-5"
     openai_models = get_available_models()
-    assert "gpt-4o-mini" in openai_models
+    assert "gpt-5" in openai_models
     assert "gpt-4o" in openai_models
 
     # Anthropic selectable
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    assert get_default_model() == "claude-3-5-sonnet-20241022"
+    assert get_default_model() == "claude-sonnet-5-5"
     anthropic_models = get_available_models()
-    assert "claude-3-5-sonnet-20241022" in anthropic_models
-    assert "claude-3-5-haiku-20241022" in anthropic_models
+    assert "claude-sonnet-5-5" in anthropic_models
+    assert "claude-haiku-5-5" in anthropic_models
 
 
 def test_tolerant_json_parser():

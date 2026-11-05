@@ -20,12 +20,16 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       - MONGO_URL=mongodb://mongo:27017
       - DB_NAME=applypilot
       - OWNER_EMAIL=${OWNER_EMAIL:-owner@applypilot.dev}
       - OWNER_PASSWORD_HASH=${OWNER_PASSWORD_HASH}
       - SESSION_SECRET=${SESSION_SECRET}
+      - SECURE_COOKIES=${SECURE_COOKIES:-false}
       - APP_ENCRYPTION_KEY=${APP_ENCRYPTION_KEY}
       - DRY_RUN=${DRY_RUN:-true}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
@@ -73,3 +77,4 @@ services:
 
 volumes:
   mongo_data:
+

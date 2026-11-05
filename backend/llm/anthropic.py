@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(BaseLLMProvider):
-    MODELS = ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"]
-    DEFAULT_MODEL = "claude-3-5-sonnet-20241022"
+    MODELS = ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-3-5-sonnet-20241022"]
+    DEFAULT_MODEL = "claude-sonnet-5-5"
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
