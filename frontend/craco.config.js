@@ -31,4 +31,18 @@ module.exports = {
       return webpackConfig;
     },
   },
+  devServer: (devServerConfig) => {
+    delete devServerConfig.onAfterSetupMiddleware;
+    delete devServerConfig.onBeforeSetupMiddleware;
+    if (devServerConfig.https !== undefined) {
+      if (devServerConfig.https) {
+        devServerConfig.server = "https";
+      }
+      delete devServerConfig.https;
+    }
+    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+      return middlewares;
+    };
+    return devServerConfig;
+  },
 };
