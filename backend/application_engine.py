@@ -128,6 +128,67 @@ def append_signature(body: str, profile: dict | None) -> str:
     return f"{clean_body}\n\n{sig}".strip()
 
 
+URL_RE = re.compile(r"https?://[^\s<>\"')\]}]+|www\.[^\s<>\"')\]}]+", re.IGNORECASE)
+
+
+def _norm_url(url: str) -> str:
+    cleaned = re.sub(r"^https?://", "", url.strip().lower())
+    cleaned = re.sub(r"^www\.", "", cleaned)
+    return cleaned.rstrip("/")
+
+
+def validate_email_draft(subject: str, body: str, hr_name: str | None = None,
+                         allowed_links: list[str] | None = None) -> tuple[bool, str | None]:
+    if not (subject or "").strip():
+        return False, "Subject line is empty"
+    clean_body = (body or "").strip()
+    if not clean_body:
+        return False, "Email body is empty"
+    words = clean_body.split()
+    if len(words) > 180:
+        return False, f"Body exceeds 180 words ({len(words)} words)"
+    if re.search(r"[\[\]\{\}]", clean_body):
+        return False, "Body contains placeholder brackets ([ ] or { })"
+    if re.search(r"\bcompany\s+name\b", clean_body, re.IGNORECASE):
+        return False, "Body contains literal 'Company Name' placeholder"
+    if hr_name and hr_name.strip() and hr_name.strip().lower() not in ("hiring manager", "hiring team", "recruiter"):
+        if re.search(r"\bhiring\s+manager\b", clean_body, re.IGNORECASE):
+            return False, f"Body addresses 'Hiring Manager' instead of contact name '{hr_name.strip()}'"
+    found_urls = URL_RE.findall(clean_body)
+    if found_urls:
+        normalized_allowed = {_norm_url(link) for link in (allowed_links or []) if link}
+        for u in found_urls:
+            if _norm_url(u) not in normalized_allowed:
+                return False, f"Body contains unauthorized URL: {u}"
+    return True, None
+
+
+async def generate_email_with_guardrails(context: dict, model: str | None = None,
+                                         max_retries: int = 2) -> dict:
+    ctx = context.copy()
+    last_reason = "Unknown error"
+    for attempt in range(max_retries + 1):
+        email = await ai_service.generate_application_email(ctx, model)
+        if not email or not isinstance(email, dict):
+            last_reason = "AI returned empty or invalid response"
+            ctx["feedback"] = "Previous attempt returned empty response. Please produce valid JSON with subject and body."
+            continue
+        subject = email.get("subject", "")
+        body = email.get("body", "")
+        ok, reason = validate_email_draft(
+            subject=subject,
+            body=body,
+            hr_name=ctx.get("hr_name"),
+            allowed_links=ctx.get("allowed_links"),
+        )
+        if ok:
+            return email
+        last_reason = reason
+        logger.warning(f"Email guardrail failed (attempt {attempt + 1}/{max_retries + 1}): {reason}")
+        ctx["feedback"] = f"Your previous draft was rejected: {reason}. Please correct this immediately."
+    raise ValueError(f"Email quality check failed after {max_retries} retries: {last_reason}")
+
+
 def is_dry_run() -> bool:
     val = (os.environ.get("DRY_RUN") or "true").strip().lower()
     return val in ("true", "1", "yes", "on")

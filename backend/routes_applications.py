@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 import ai_service
 from application_engine import (add_event, append_signature, count_sent_today,
-                                duplicate_application_exists, email_is_valid, get_allowed_links,
+                                duplicate_application_exists, email_is_valid,
+                                generate_email_with_guardrails, get_allowed_links,
                                 get_settings, normalize, send_application)
 from db import db, utc_now_iso, parse_iso
 from deps import get_current_user, get_owned
@@ -123,9 +124,12 @@ async def generate_application(body: GenerateIn, user: dict = Depends(get_curren
         "candidate_name": candidate_name,
         "allowed_links": allowed_links,
     }
-    email = await ai_service.generate_application_email(context, settings.get("ai_model"))
-    if not email or not email.get("body"):
-        raise HTTPException(status_code=502, detail="AI could not generate the email - try again")
+    try:
+        email = await generate_email_with_guardrails(context, settings.get("ai_model"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI could not generate the email: {exc}")
 
     body_text = append_signature(email.get("body", ""), prof_settings)
 
