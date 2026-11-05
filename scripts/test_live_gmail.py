@@ -67,7 +67,11 @@ async def main():
     else:
         role_id = role["id"]
 
-    # 3. Create test application document
+    # 3. Create a test resume file and staged test application document
+    from storage import put_object
+    pdf_bytes = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000108 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n"
+    attach_meta = put_object("resumes/test_resume.pdf", pdf_bytes, "application/pdf")
+
     app_id = f"app_live_test_{os.urandom(4).hex()}"
     test_app = {
         "id": app_id,
@@ -77,7 +81,9 @@ async def main():
         "hr_name": "Test Hiring Lead",
         "hr_email": recipient,
         "role_profile_id": role_id,
-        "resume_name": "Test_Resume.pdf",
+        "resume_name": "Amay_Mishra_Resume.pdf",
+        "attachment_path": attach_meta["path"],
+        "attachment_filename": "Amay_Mishra_Resume.pdf",
         "status": "approved",
         "subject": "Application: Software Engineer – ApplyPilot Live Verification",
         "body_text": (
@@ -93,7 +99,7 @@ async def main():
 
     # 4. Dispatch via application_engine.send_application
     print("\n[*] Dispatching email via connected Gmail API (DRY_RUN=false)...")
-    res = await application_engine.send_application("owner", app_id)
+    res = await application_engine.send_application("owner", test_app)
     print("\nResult from send_application:", res)
 
     # 5. Verify database update
@@ -113,3 +119,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
