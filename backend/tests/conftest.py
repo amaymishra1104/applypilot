@@ -6,9 +6,10 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
-FRONT_ENV = dotenv_values("/app/frontend/.env")
-BASE_URL = FRONT_ENV["REACT_APP_BACKEND_URL"].rstrip("/")
-_SK = dotenv_values("/app/backend/.env").get("CLERK_SECRET_KEY")
+FRONT_ENV = dotenv_values("frontend/.env") or dotenv_values("/app/frontend/.env") or {}
+BASE_URL = (FRONT_ENV.get("REACT_APP_BACKEND_URL") or "http://localhost:8000").rstrip("/")
+BACK_ENV = dotenv_values("backend/.env") or dotenv_values("/app/backend/.env") or {}
+_SK = BACK_ENV.get("CLERK_SECRET_KEY")
 CLERK = "https://api.clerk.com/v1"
 PRIMARY = "pilot-tester@applypilot.dev"
 SECOND = "pilot-second@applypilot.dev"
