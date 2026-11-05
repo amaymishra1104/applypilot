@@ -22,7 +22,10 @@ def get_owner_email() -> str:
 
 
 def get_owner_password_hash() -> str:
-    return os.environ.get("OWNER_PASSWORD_HASH", "").strip()
+    h = os.environ.get("OWNER_PASSWORD_HASH", "").strip()
+    if h.startswith("$$2"):
+        h = h.replace("$$", "$")
+    return h
 
 
 def get_session_secret() -> str:

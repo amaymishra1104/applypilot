@@ -24,28 +24,11 @@ services:
       - path: ./backend/.env
         required: false
     environment:
+      # Container-internal network links
       - MONGO_URL=mongodb://mongo:27017
       - DB_NAME=applypilot
-      - OWNER_EMAIL=${OWNER_EMAIL:-owner@applypilot.dev}
-      - OWNER_PASSWORD_HASH=${OWNER_PASSWORD_HASH}
-      - SESSION_SECRET=${SESSION_SECRET}
+      # Plain HTTP locally through nginx or direct port: keep false unless HTTPS
       - SECURE_COOKIES=${SECURE_COOKIES:-false}
-      - APP_ENCRYPTION_KEY=${APP_ENCRYPTION_KEY}
-      - DRY_RUN=${DRY_RUN:-true}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
-      - LLM_MODEL=${LLM_MODEL:-gemini-2.5-flash}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/gmail/callback}
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
     volumes:
       - ./data/uploads:/app/data/uploads

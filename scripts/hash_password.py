@@ -49,6 +49,8 @@ def main():
     print(hashed)
     print("\nAdd this to your backend/.env as:")
     print(f"OWNER_PASSWORD_HASH={hashed}")
+    print("\nIf running with Docker Compose (escape $ as $$ to avoid variable interpolation):")
+    print(f"OWNER_PASSWORD_HASH={hashed.replace('$', '$$')}")
 
 
 if __name__ == "__main__":
