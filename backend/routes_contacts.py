@@ -90,7 +90,7 @@ async def list_contacts(search: str = "", user: dict = Depends(get_current_user)
     contacts = await db.hr_contacts.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
     apps = await db.job_applications.find(
-        {"user_id": user["user_id"]},
+        {"user_id": user["user_id"], "dry_run": {"$ne": True}},
         {"_id": 0, "id": 1, "hr_email": 1, "status": 1, "sent_at": 1, "created_at": 1, "bounced": 1, "reply_received": 1}
     ).to_list(5000)
 
@@ -427,7 +427,7 @@ async def bulk_generate(body: BulkGenerateIn, user: dict = Depends(get_current_u
     contact_ids = body.contact_ids or []
     if body.select_all_without_app or not contact_ids:
         all_contacts = await db.hr_contacts.find({"user_id": user_id}, {"_id": 0, "id": 1, "hr_email_norm": 1}).to_list(2000)
-        apps = await db.job_applications.find({"user_id": user_id, "status": {"$ne": "cancelled"}}, {"_id": 0, "hr_email": 1}).to_list(5000)
+        apps = await db.job_applications.find({"user_id": user_id, "status": {"$ne": "cancelled"}, "dry_run": {"$ne": True}}, {"_id": 0, "hr_email": 1}).to_list(5000)
         app_emails = {norm_email(a.get("hr_email", "")) for a in apps}
         target_ids = [c["id"] for c in all_contacts if c.get("hr_email_norm") not in app_emails]
     else:

@@ -22,7 +22,7 @@ class FollowUpIn(BaseModel):
 
 @router.get("/tracking/history")
 async def history(search: str = "", user: dict = Depends(get_current_user)):
-    query = {"user_id": user["user_id"]}
+    query = {"user_id": user["user_id"], "dry_run": {"$ne": True}}
     if search.strip():
         rx = {"$regex": re.escape(search.strip()), "$options": "i"}
         query["$or"] = [{"company": rx}, {"job_title": rx}, {"hr_email": rx},
@@ -33,7 +33,7 @@ async def history(search: str = "", user: dict = Depends(get_current_user)):
 
 @router.get("/tracking/export")
 async def export_csv(user: dict = Depends(get_current_user)):
-    docs = await db.job_applications.find({"user_id": user["user_id"]}, {"_id": 0, "body_text": 0}) \
+    docs = await db.job_applications.find({"user_id": user["user_id"], "dry_run": {"$ne": True}}, {"_id": 0, "body_text": 0}) \
         .sort("created_at", -1).to_list(1000)
     buffer = io.StringIO()
     writer = csv.writer(buffer)

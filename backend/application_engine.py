@@ -221,6 +221,7 @@ async def duplicate_application_exists(user_id: str, hr_email: str, job_title: s
         "hr_email": normalize(hr_email),
         "job_title_norm": normalize(job_title),
         "status": {"$nin": ["cancelled", "send_failed"]},
+        "dry_run": {"$ne": True},
     }
     if exclude_id:
         query["id"] = {"$ne": exclude_id}
@@ -437,7 +438,7 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
         min_delay_min = float(autop.get("min_delay_minutes", 30))
         if min_delay_min > 0:
             last_sent = await db.job_applications.find_one(
-                {"user_id": uid, "status": "sent"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+                {"user_id": uid, "status": "sent", "dry_run": {"$ne": True}}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
             if last_sent and last_sent.get("sent_at"):
                 minutes_since = (datetime.now(timezone.utc) - parse_iso(last_sent["sent_at"])).total_seconds() / 60
                 if minutes_since < min_delay_min:
@@ -461,7 +462,7 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
             # Enforce min_delay between sends inside a single cycle too
             if min_delay_min > 0:
                 last_sent = await db.job_applications.find_one(
-                    {"user_id": uid, "status": "sent"}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
+                    {"user_id": uid, "status": "sent", "dry_run": {"$ne": True}}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
                 if last_sent and last_sent.get("sent_at"):
                     minutes_since = (datetime.now(timezone.utc) - parse_iso(last_sent["sent_at"])).total_seconds() / 60
                     if minutes_since < min_delay_min:
@@ -515,7 +516,7 @@ async def run_reply_scan_cycle(user_id: str | None = None) -> dict:
         uid = conn["user_id"]
         summary["users"] += 1
         apps = await db.job_applications.find(
-            {"user_id": uid, "status": {"$in": ["sent", "followed_up"]}},
+            {"user_id": uid, "status": {"$in": ["sent", "followed_up"]}, "dry_run": {"$ne": True}},
             {"_id": 0, "id": 1, "hr_email": 1, "company": 1, "job_title": 1, "thread_id": 1},
         ).to_list(500)
         if not apps:
@@ -574,7 +575,8 @@ async def run_interview_reminder_cycle(user_id: str | None = None) -> dict:
     summary = {"reminders": 0}
     now = datetime.now(timezone.utc)
     query = {"status": "interview", "interview_at": {"$gte": now.isoformat()},
-             "interview_reminder_sent": {"$ne": True}}
+             "interview_reminder_sent": {"$ne": True},
+             "dry_run": {"$ne": True}}
     if user_id:
         query["user_id"] = user_id
     apps = await db.job_applications.find(query, {"_id": 0}).to_list(500)
@@ -606,7 +608,7 @@ async def run_interview_reminder_cycle(user_id: str | None = None) -> dict:
 # ------------------------------------------------------------- daily board digest
 
 async def send_board_digest(uid: str, settings: dict, since: str | None) -> tuple[int, bool]:
-    query = {"user_id": uid, "channel": "board", "status": {"$in": ["awaiting_approval", "draft"]}}
+    query = {"user_id": uid, "channel": "board", "status": {"$in": ["awaiting_approval", "draft"]}, "dry_run": {"$ne": True}}
     if since:
         query["created_at"] = {"$gt": since}
     apps = await db.job_applications.find(query, {"_id": 0, "body_text": 0}).sort("match_score", -1).to_list(50)
@@ -665,7 +667,7 @@ async def run_followup_cycle(user_id: str | None = None) -> dict:
         days = int(settings.get("followups", {}).get("days", 4))
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         apps = await db.job_applications.find(
-            {"user_id": uid, "status": {"$in": ["sent", "followed_up"]}, "sent_at": {"$lt": cutoff}},
+            {"user_id": uid, "status": {"$in": ["sent", "followed_up"]}, "sent_at": {"$lt": cutoff}, "dry_run": {"$ne": True}},
             {"_id": 0}).to_list(500)
         for app_doc in apps:
             replied = await db.application_events.count_documents(
