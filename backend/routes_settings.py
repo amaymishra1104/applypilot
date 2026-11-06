@@ -15,6 +15,14 @@ router = APIRouter(prefix="/api", tags=["settings"])
 TONES = ["professional", "warm", "direct", "enthusiastic"]
 
 
+class SendWindowIn(BaseModel):
+    enabled: Optional[bool] = None
+    timezone: Optional[str] = None
+    start_hour: Optional[int] = Field(None, ge=0, le=23)
+    end_hour: Optional[int] = Field(None, ge=0, le=24)
+    days: Optional[list[str]] = None
+
+
 class AutopilotIn(BaseModel):
     enabled: Optional[bool] = None
     mode: Optional[Literal["manual", "approval", "auto"]] = None
@@ -23,6 +31,9 @@ class AutopilotIn(BaseModel):
     max_retries: Optional[int] = Field(None, ge=0, le=5)
     min_match_score: Optional[int] = Field(None, ge=0, le=100)
     paused: Optional[bool] = None
+    jitter_seconds: Optional[int] = Field(None, ge=0, le=300)
+    cross_role_cooldown_days: Optional[int] = Field(None, ge=0, le=90)
+    send_window: Optional[SendWindowIn] = None
 
 
 class FollowupsIn(BaseModel):
@@ -103,12 +114,19 @@ async def write_settings(body: SettingsIn, user: dict = Depends(get_current_user
                          ("digest", DigestIn), ("profile", ProfileIn)):
         incoming = data.get(section)
         if incoming:
-            merged = {**settings[section], **{k: v for k, v in incoming.items() if v is not None}}
+            merged = {**settings.get(section, {}), **{k: v for k, v in incoming.items() if v is not None}}
+            if section == "autopilot" and "send_window" in incoming and isinstance(incoming["send_window"], dict):
+                cur_sw = settings.get("autopilot", {}).get("send_window", {})
+                merged["send_window"] = {**cur_sw, **{k: v for k, v in incoming["send_window"].items() if v is not None}}
             updates[section] = merged
     if "timezone" in (data.get("digest") or {}):
         from zoneinfo import available_timezones
         if updates["digest"]["timezone"] not in available_timezones():
             raise HTTPException(status_code=400, detail="Unknown timezone")
+    if "send_window" in (data.get("autopilot") or {}) and "timezone" in (data["autopilot"].get("send_window") or {}):
+        from zoneinfo import available_timezones
+        if updates.get("autopilot", {}).get("send_window", {}).get("timezone") not in available_timezones():
+            raise HTTPException(status_code=400, detail="Unknown timezone for send_window")
     if updates:
         updates["updated_at"] = utc_now_iso()
         await db.app_settings.update_one({"user_id": user["user_id"]}, {"$set": updates}, upsert=True)

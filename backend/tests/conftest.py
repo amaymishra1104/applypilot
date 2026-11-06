@@ -8,6 +8,7 @@ os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ.setdefault("OWNER_EMAIL", "owner@applypilot.dev")
 os.environ.setdefault("OWNER_PASSWORD_HASH", "$2b$12$aCdSlPdvtDVi9woG9kKGIewm0o1.l6wR7u2V4w5QOQ/PHdbyIyogy")
 os.environ.setdefault("SESSION_SECRET", "test_session_secret_for_applypilot_owner_12345")
+os.environ.setdefault("APP_ENCRYPTION_KEY", "4SloZgHIl31EvC5tYwA-IdT6ZXc6R5JulFBEdZrgRrE=")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest

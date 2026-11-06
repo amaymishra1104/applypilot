@@ -46,7 +46,7 @@ class FollowupEmailDraft(BaseModel):
 
 
 class ReplyClassification(BaseModel):
-    category: str = Field(description="interview, interested, rejection, auto_response, or other")
+    category: str = Field(description="interview, interested, rejection, auto_response, unsubscribe, out_of_office, bounce, or other")
     summary: str = Field(description="1-2 sentence factual summary")
     next_action: str = Field(description="Recommended next action for candidate")
 

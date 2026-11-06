@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, Loading, PageHeader, StatusBadge } from "@/components/common";
 
-const STATUS_OPTIONS = ["replied", "interview", "rejected", "offer", "sent"];
+const STATUS_OPTIONS = ["replied", "interview", "rejected", "offer", "sent", "bounced", "unsubscribed"];
 
 function InterviewDialog({ open, onClose, app, onSaved }) {
   const [when, setWhen] = useState("");

@@ -180,10 +180,14 @@ async def classify_reply(subject: str, body: str, model: Optional[str] = None) -
     prompt = (
         "Classify this email reply to a job application.\n\n"
         f"SUBJECT: {subject}\n\nBODY:\n{body[:4000]}\n\n"
-        'Return JSON: {"category": "interview"|"interested"|"rejection"|"auto_response"|"other", '
+        'Return JSON: {"category": "interview"|"interested"|"rejection"|"auto_response"|"unsubscribe"|"out_of_office"|"bounce"|"other", '
         '"summary": str (1-2 sentences, factual), "next_action": str (what the candidate should do next)}. '
         "interview = invites to an interview or scheduling; interested = positive/engaged reply; "
-        "rejection = explicit or clear decline; auto_response = automated acknowledgment; other = anything else."
+        "rejection = explicit or clear decline; auto_response = automated acknowledgment; "
+        "unsubscribe = recipient requests not to contact them, remove from list, or stop emailing; "
+        "out_of_office = automatic vacation, holiday, or out-of-office autoreply; "
+        "bounce = mailer-daemon, delivery status notification failure, mailbox not found, rejected by server; "
+        "other = anything else."
     )
     return await _ask_json(system, prompt, schema=ReplyClassification, model=model)
 

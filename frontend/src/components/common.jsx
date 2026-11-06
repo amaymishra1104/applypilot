@@ -20,6 +20,8 @@ export const STATUS_META = {
   send_failed: { label: "Send failed", cls: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30" },
   submitting: { label: "Submitting", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30" },
   needs_attention: { label: "Needs your input", cls: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30" },
+  bounced: { label: "Bounced", cls: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30" },
+  unsubscribed: { label: "Unsubscribed", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30" },
   cancelled: { label: "Cancelled", cls: "bg-slate-500/10 text-slate-500 border-slate-500/20" },
 };
 

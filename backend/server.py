@@ -12,6 +12,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from db import db, client
 from auth import validate_owner_config
+from crypto import validate_encryption_key
 from routes_auth import router as auth_router
 from routes_roles import router as roles_router
 from routes_contacts import router as contacts_router
@@ -23,6 +24,7 @@ from routes_settings import router as settings_router
 from routes_dashboard import router as dashboard_router
 from cron_routes import router as cron_router
 from routes_boards import router as boards_router
+from routes_suppressions import router as suppressions_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -73,6 +75,7 @@ INDEXES: dict[str, list[IndexModel]] = {
                          IndexModel([("user_id", ASCENDING)], name="user_id")],
     "board_search_runs": [IndexModel([("user_id", ASCENDING), ("started_at", DESCENDING)], name="user_started")],
     "cron_runs": [IndexModel([("created_at", ASCENDING)], name="created_at", expireAfterSeconds=172800)],
+    "suppressions": [IndexModel([("user_id", ASCENDING), ("email", ASCENDING)], name="user_email", unique=True)],
 }
 
 
@@ -91,6 +94,7 @@ from scheduler import start_scheduler, stop_scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_owner_config()
+    validate_encryption_key()
     index_task = asyncio.create_task(ensure_indexes())
     storage_task = asyncio.create_task(_init_storage())
     oauth_task = asyncio.create_task(_cleanup_oauth_states())
@@ -125,14 +129,22 @@ async def health():
 
 app.include_router(auth_router)
 for router in (roles_router, contacts_router, opportunities_router, applications_router,
-               tracking_router, gmail_router, settings_router, dashboard_router, cron_router, boards_router):
+               tracking_router, gmail_router, settings_router, dashboard_router, cron_router, boards_router,
+               suppressions_router):
     app.include_router(router)
 app.include_router(api_router)
+
+def get_cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    valid = [o for o in origins if o != "*"]
+    return valid or ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=get_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

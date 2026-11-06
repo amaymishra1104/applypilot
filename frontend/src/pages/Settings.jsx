@@ -167,17 +167,66 @@ export default function Settings() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div><p className="text-sm font-medium">Auto-pilot enabled</p><p className="text-xs text-muted-foreground">Process the queue automatically on schedule</p></div>
-              <Switch checked={!!settings.autopilot.enabled} onCheckedChange={(v) => set("autopilot", "enabled", v)} data-testid="settings-autopilot-switch" />
+              <Switch checked={!!settings.autopilot?.enabled} onCheckedChange={(v) => set("autopilot", "enabled", v)} data-testid="settings-autopilot-switch" />
             </div>
             <div className="flex items-center justify-between">
               <div><p className="text-sm font-medium">Emergency paused</p><p className="text-xs text-muted-foreground">Blocks all automatic sending immediately</p></div>
-              <Switch checked={!!settings.autopilot.paused} onCheckedChange={(v) => set("autopilot", "paused", v)} data-testid="settings-autopilot-paused-switch" />
+              <Switch checked={!!settings.autopilot?.paused} onCheckedChange={(v) => set("autopilot", "paused", v)} data-testid="settings-autopilot-paused-switch" />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Daily email limit</Label><Input type="number" min="1" max="50" value={settings.autopilot.max_per_day} onChange={(e) => set("autopilot", "max_per_day", Number(e.target.value))} data-testid="settings-daily-limit" /></div>
-              <div className="space-y-1.5"><Label>Min match score to auto-send</Label><Input type="number" min="0" max="100" value={settings.autopilot.min_match_score} onChange={(e) => set("autopilot", "min_match_score", Number(e.target.value))} data-testid="settings-min-score" /></div>
-              <div className="space-y-1.5"><Label>Delay between sends (min)</Label><Input type="number" min="1" max="1440" value={settings.autopilot.min_delay_minutes} onChange={(e) => set("autopilot", "min_delay_minutes", Number(e.target.value))} data-testid="settings-delay" /></div>
-              <div className="space-y-1.5"><Label>Retry limit</Label><Input type="number" min="0" max="5" value={settings.autopilot.max_retries} onChange={(e) => set("autopilot", "max_retries", Number(e.target.value))} data-testid="settings-retries" /></div>
+              <div className="space-y-1.5"><Label>Daily email limit</Label><Input type="number" min="1" max="50" value={settings.autopilot?.max_per_day ?? 15} onChange={(e) => set("autopilot", "max_per_day", Number(e.target.value))} data-testid="settings-daily-limit" /></div>
+              <div className="space-y-1.5"><Label>Min match score to auto-send</Label><Input type="number" min="0" max="100" value={settings.autopilot?.min_match_score ?? 60} onChange={(e) => set("autopilot", "min_match_score", Number(e.target.value))} data-testid="settings-min-score" /></div>
+              <div className="space-y-1.5"><Label>Delay between sends (min)</Label><Input type="number" min="1" max="1440" value={settings.autopilot?.min_delay_minutes ?? 10} onChange={(e) => set("autopilot", "min_delay_minutes", Number(e.target.value))} data-testid="settings-delay" /></div>
+              <div className="space-y-1.5"><Label>Retry limit</Label><Input type="number" min="0" max="5" value={settings.autopilot?.max_retries ?? 2} onChange={(e) => set("autopilot", "max_retries", Number(e.target.value))} data-testid="settings-retries" /></div>
+              <div className="space-y-1.5"><Label>Jitter delay (sec)</Label><Input type="number" min="0" max="300" value={settings.autopilot?.jitter_seconds ?? 30} onChange={(e) => set("autopilot", "jitter_seconds", Number(e.target.value))} data-testid="settings-jitter" /></div>
+              <div className="space-y-1.5"><Label>Cross-role cooldown (days)</Label><Input type="number" min="0" max="90" value={settings.autopilot?.cross_role_cooldown_days ?? 14} onChange={(e) => set("autopilot", "cross_role_cooldown_days", Number(e.target.value))} data-testid="settings-cooldown" /></div>
+            </div>
+
+            <div className="pt-2 border-t space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Send window</p>
+                  <p className="text-xs text-muted-foreground">Only send during business hours (Mon-Fri)</p>
+                </div>
+                <Switch
+                  checked={settings.autopilot?.send_window?.enabled ?? true}
+                  onCheckedChange={(v) => {
+                    const sw = settings.autopilot?.send_window || { timezone: browserTz(), start_hour: 9, end_hour: 18, days: ["Mon", "Tue", "Wed", "Thu", "Fri"] };
+                    set("autopilot", "send_window", { ...sw, enabled: v });
+                  }}
+                  data-testid="settings-send-window-switch"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Start hour (0-23)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="23"
+                    value={settings.autopilot?.send_window?.start_hour ?? 9}
+                    onChange={(e) => {
+                      const sw = settings.autopilot?.send_window || { timezone: browserTz(), days: ["Mon", "Tue", "Wed", "Thu", "Fri"] };
+                      set("autopilot", "send_window", { ...sw, start_hour: Number(e.target.value) });
+                    }}
+                    data-testid="settings-send-window-start"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>End hour (1-24)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={settings.autopilot?.send_window?.end_hour ?? 18}
+                    onChange={(e) => {
+                      const sw = settings.autopilot?.send_window || { timezone: browserTz(), days: ["Mon", "Tue", "Wed", "Thu", "Fri"] };
+                      set("autopilot", "send_window", { ...sw, end_hour: Number(e.target.value) });
+                    }}
+                    data-testid="settings-send-window-end"
+                  />
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

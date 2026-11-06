@@ -14,7 +14,7 @@ import ai_service
 from application_engine import (add_event, append_signature, count_sent_today,
                                 duplicate_application_exists, email_is_valid,
                                 generate_email_with_guardrails, get_allowed_links,
-                                get_profiles_with_resumes, get_settings, normalize)
+                                get_profiles_with_resumes, get_settings, is_email_suppressed, normalize)
 from db import db, utc_now_iso
 from deps import get_current_user, get_owned
 
@@ -223,6 +223,17 @@ async def run_bulk_generation_job(job_id: str, user_id: str):
                 skipped += 1
                 processed_ids.add(contact["id"])
                 errors.append({"contact_id": contact["id"], "email": email, "reason": f"Role-account address ({email}) skipped"})
+                await db.bulk_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
+                )
+            return
+
+        if await is_email_suppressed(user_id, email):
+            async with lock:
+                skipped += 1
+                processed_ids.add(contact["id"])
+                errors.append({"contact_id": contact["id"], "email": email, "reason": "Contact email is on suppression list"})
                 await db.bulk_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"done": done, "failed": failed, "skipped": skipped, "errors": errors, "processed_ids": list(processed_ids), "updated_at": utc_now_iso()}}
@@ -588,6 +599,9 @@ async def import_contacts(file: UploadFile = File(...), user: dict = Depends(get
         if email in seen_in_file:
             result["duplicates"].append({"row": index, "reason": f"Duplicate in file: {email}"})
             continue
+        if await is_email_suppressed(user["user_id"], email):
+            result["errors"].append({"row": index, "reason": f"Suppressed email: {email} (on suppression list)"})
+            continue
         if await find_duplicate(user["user_id"], email):
             result["duplicates"].append({"row": index, "reason": f"Already exists: {email}"})
             continue
@@ -601,6 +615,8 @@ async def import_contacts(file: UploadFile = File(...), user: dict = Depends(get
 async def create_contact(body: ContactIn, user: dict = Depends(get_current_user)):
     if not EMAIL_RE.match(norm_email(body.hr_email)):
         raise HTTPException(status_code=400, detail="Invalid email address")
+    if await is_email_suppressed(user["user_id"], body.hr_email):
+        raise HTTPException(status_code=400, detail="This email is on the suppression list")
     if await find_duplicate(user["user_id"], body.hr_email):
         raise HTTPException(status_code=409, detail="A contact with this email already exists")
     doc = build_doc(user["user_id"], body.model_dump())

@@ -53,6 +53,43 @@ async def add_event(user_id: str, application_id: str | None, event_type: str, d
     return event
 
 
+async def is_email_suppressed(user_id: str, email: str) -> bool:
+    if not email:
+        return False
+    norm = normalize(email)
+    doc = await db.suppressions.find_one({"user_id": user_id, "email": norm})
+    return doc is not None
+
+
+async def get_suppression_info(user_id: str, email: str) -> dict | None:
+    if not email:
+        return None
+    return await db.suppressions.find_one({"user_id": user_id, "email": normalize(email)}, {"_id": 0})
+
+
+async def suppress_email(user_id: str, email: str, reason: str, source: str = "manual") -> dict:
+    norm = normalize(email)
+    doc = {
+        "user_id": user_id,
+        "email": norm,
+        "reason": reason,
+        "source": source,
+        "created_at": utc_now_iso(),
+    }
+    await db.suppressions.update_one(
+        {"user_id": user_id, "email": norm},
+        {"$set": doc},
+        upsert=True,
+    )
+    return doc
+
+
+async def unsuppress_email(user_id: str, email: str) -> bool:
+    norm = normalize(email)
+    res = await db.suppressions.delete_one({"user_id": user_id, "email": norm})
+    return res.deleted_count > 0
+
+
 async def get_settings(user_id: str) -> dict:
     DEFAULTS = {
         "ai_model": get_default_model(),
@@ -65,8 +102,22 @@ async def get_settings(user_id: str) -> dict:
             "portfolio": "",
         },
         "autopilot": {
-            "enabled": False, "mode": "approval", "max_per_day": 10,
-            "min_delay_minutes": 30, "max_retries": 2, "min_match_score": 60, "paused": False,
+            "enabled": False,
+            "mode": "approval",
+            "max_per_day": 15,
+            "min_delay_minutes": 10,
+            "max_retries": 2,
+            "min_match_score": 60,
+            "paused": False,
+            "jitter_seconds": 30,
+            "cross_role_cooldown_days": 14,
+            "send_window": {
+                "enabled": True,
+                "timezone": "Asia/Kolkata",
+                "start_hour": 9,
+                "end_hour": 18,
+                "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+            },
         },
         "followups": {"enabled": True, "days": 4},
         "interviews": {"reminder_hours": 24},
@@ -81,6 +132,38 @@ async def get_settings(user_id: str) -> dict:
         if isinstance(doc.get(section), dict):
             doc[section] = {**DEFAULTS[section], **doc[section]}
     return {**DEFAULTS, **doc}
+
+
+def is_within_send_window(settings: dict, now: datetime | None = None) -> tuple[bool, str]:
+    autopilot = settings.get("autopilot", {})
+    window = autopilot.get("send_window", {})
+    if not window.get("enabled", True):
+        return True, "Send window disabled"
+
+    tz_str = window.get("timezone", "Asia/Kolkata")
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_str)
+    except Exception:
+        tz = timezone.utc
+
+    now_dt = now or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    local_dt = now_dt.astimezone(tz)
+
+    allowed_days = window.get("days") or ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    day_name = local_dt.strftime("%a")
+    if day_name not in allowed_days:
+        return False, f"Outside send window: {day_name} not in {allowed_days} ({tz_str})"
+
+    start_h = int(window.get("start_hour", 9))
+    end_h = int(window.get("end_hour", 18))
+    current_hour = local_dt.hour
+    if current_hour < start_h or current_hour >= end_h:
+        return False, f"Outside send window: {local_dt.strftime('%H:%M')} not in {start_h}:00-{end_h}:00 ({tz_str})"
+
+    return True, "Within send window"
 
 
 def format_signature(profile: dict | None) -> str:
@@ -299,6 +382,31 @@ async def send_application(user_id: str, app_doc: dict, trigger: str = "manual",
     if not email_is_valid(app_doc.get("hr_email", "")):
         return await _handle_failure(f"Invalid recipient email: {app_doc.get('hr_email', '')}")
 
+    # Check suppression list
+    if await is_email_suppressed(user_id, app_doc.get("hr_email", "")):
+        info = await get_suppression_info(user_id, app_doc.get("hr_email", ""))
+        reason = (info or {}).get("reason", "suppressed")
+        return await _handle_failure(f"Recipient {app_doc.get('hr_email')} is suppressed ({reason})")
+
+    # Check cross-role cooling-off protection (default 14 days)
+    settings = await get_settings(user_id)
+    cooldown_days = int(settings.get("autopilot", {}).get("cross_role_cooldown_days", 14))
+    if cooldown_days > 0 and not app_doc.get("force_send"):
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=cooldown_days)).isoformat()
+        recent_sent = await db.job_applications.find_one({
+            "user_id": user_id,
+            "hr_email": app_doc["hr_email"],
+            "status": "sent",
+            "sent_at": {"$gte": cutoff},
+            "dry_run": {"$ne": True},
+            "id": {"$ne": app_doc["id"]},
+        })
+        if recent_sent:
+            return await _handle_failure(
+                f"Cross-role cooldown active: emailed this contact on {recent_sent.get('sent_at')} "
+                f"for '{recent_sent.get('job_title', 'another role')}'. Cooling off period: {cooldown_days} days."
+            )
+
     conn = await db.gmail_connections.find_one({"user_id": user_id}, {"_id": 0})
     if not conn or conn.get("status") == "reauth_required" or not conn.get("email"):
         return await _handle_failure("Gmail is not connected or re-authentication is required")
@@ -428,15 +536,22 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
             summary["skipped"] += 1
             continue
 
+        # Enforce send window
+        in_window, window_reason = is_within_send_window(settings)
+        if not in_window:
+            logger.info("Autopilot skipping user %s: %s", uid, window_reason)
+            summary["skipped"] += 1
+            continue
+
         summary["users"] += 1
-        max_per_day = int(autop.get("max_per_day", 10))
+        max_per_day = min(int(autop.get("max_per_day", 15)), 50)
         sent_today = await count_sent_today(uid)
         remaining = max_per_day - sent_today
         if remaining <= 0:
             summary["skipped"] += 1
             continue
 
-        min_delay_min = float(autop.get("min_delay_minutes", 30))
+        min_delay_min = float(autop.get("min_delay_minutes", 10))
         if min_delay_min > 0:
             last_sent = await db.job_applications.find_one(
                 {"user_id": uid, "status": "sent", "dry_run": {"$ne": True}}, {"_id": 0, "sent_at": 1}, sort=[("sent_at", -1)])
@@ -452,8 +567,9 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
 
         failures = 0
         min_score = int(autop.get("min_match_score", 60))
+        jitter_sec = float(autop.get("jitter_seconds", 30))
 
-        for app_doc in candidates:
+        for idx, app_doc in enumerate(candidates):
             # Enforce daily cap inside the loop
             sent_today = await count_sent_today(uid)
             if sent_today >= max_per_day:
@@ -469,6 +585,11 @@ async def run_autopilot_cycle(user_id: str | None = None) -> dict:
                     if minutes_since < min_delay_min:
                         summary["skipped"] += 1
                         break
+
+            # Apply jitter between sends (skip during tests)
+            if idx > 0 and jitter_sec > 0 and os.environ.get("DB_NAME") != "applypilot_test" and not os.environ.get("TESTING"):
+                import random
+                await asyncio.sleep(random.uniform(0.5, min(jitter_sec, 60.0)))
 
             # Score gating applies only to "queued_auto" items. Hand-approved items send regardless of score.
             if app_doc.get("status") == "queued_auto":
@@ -534,18 +655,100 @@ async def run_reply_scan_cycle(user_id: str | None = None) -> dict:
             if msg["id"] in processed:
                 continue
             from_value = (msg.get("from") or "").lower()
+            subject_value = (msg.get("subject") or "").lower()
             match = re.search(r"<([^>]+)>", from_value)
             sender_email = match.group(1) if match else from_value.strip()
+
+            is_bounce_signal = (
+                any(k in from_value for k in ("mailer-daemon", "postmaster", "mail delivery subsystem"))
+                or any(k in subject_value for k in (
+                    "delivery status notification",
+                    "undelivered mail",
+                    "mail delivery failed",
+                    "failure notice",
+                    "returned to sender",
+                    "undeliverable"
+                ))
+            )
+
             app_doc = by_thread.get(msg.get("thread_id")) or by_email.get(normalize(sender_email))
+            body = None
+            if not app_doc and is_bounce_signal:
+                body = await gmail_service.get_message_text(uid, msg["id"])
+                body_lower = body.lower()
+                for norm_email, candidate_app in by_email.items():
+                    if norm_email in body_lower:
+                        app_doc = candidate_app
+                        break
+
             if not app_doc:
                 continue
-            body = await gmail_service.get_message_text(uid, msg["id"])
+
+            if body is None:
+                body = await gmail_service.get_message_text(uid, msg["id"])
+
             classification = await ai_service.classify_reply(msg.get("subject", ""), body) or {}
             processed.add(msg["id"])
             new_processed.append(msg["id"])
             summary["scanned"] += 1
             category = classification.get("category", "other")
-            if category in ("interview", "interested", "rejection"):
+            if is_bounce_signal:
+                category = "bounce"
+
+            if category == "bounce":
+                await db.job_applications.update_one(
+                    {"id": app_doc["id"], "user_id": uid},
+                    {"$set": {
+                        "status": "bounced",
+                        "bounced": True,
+                        "bounced_at": utc_now_iso(),
+                        "latest_response": classification.get("summary") or "Delivery failed (bounce detected)",
+                        "replied_at": utc_now_iso(),
+                    }},
+                )
+                await db.follow_ups.update_many(
+                    {"user_id": uid, "application_id": app_doc["id"], "status": "pending"},
+                    {"$set": {"status": "cancelled"}},
+                )
+                await suppress_email(uid, app_doc["hr_email"], reason="bounce", source="reply_scan")
+                await add_event(
+                    uid, app_doc["id"], "bounce",
+                    f"Email bounced: {classification.get('summary', msg.get('subject', 'Delivery failure'))}",
+                    {"from": msg.get("from", ""), "subject": msg.get("subject", ""), "category": "bounce"},
+                )
+                summary["replies"] += 1
+                if settings.get("notifications", {}).get("send_failed") and user.get("email"):
+                    await notify_user(user, "send_failed", {
+                        "company": app_doc.get("company", ""),
+                        "error": f"Email bounced: {msg.get('subject', 'Delivery failure')}",
+                    })
+            elif category == "unsubscribe":
+                await db.job_applications.update_one(
+                    {"id": app_doc["id"], "user_id": uid},
+                    {"$set": {
+                        "status": "unsubscribed",
+                        "latest_response": classification.get("summary") or "Unsubscribe requested",
+                        "replied_at": utc_now_iso(),
+                    }},
+                )
+                await db.follow_ups.update_many(
+                    {"user_id": uid, "application_id": app_doc["id"], "status": "pending"},
+                    {"$set": {"status": "cancelled"}},
+                )
+                await suppress_email(uid, app_doc["hr_email"], reason="unsubscribe", source="reply_scan")
+                await add_event(
+                    uid, app_doc["id"], "unsubscribe",
+                    f"Unsubscribe requested: {classification.get('summary', '')}",
+                    {"from": msg.get("from", ""), "subject": msg.get("subject", ""), "category": "unsubscribe"},
+                )
+                summary["replies"] += 1
+            elif category == "out_of_office":
+                await add_event(
+                    uid, app_doc["id"], "out_of_office",
+                    f"Out of office: {classification.get('summary', '')}",
+                    {"from": msg.get("from", ""), "subject": msg.get("subject", ""), "category": "out_of_office"},
+                )
+            elif category in ("interview", "interested", "rejection"):
                 status_map = {"interview": "interview", "interested": "replied", "rejection": "rejected"}
                 await db.job_applications.update_one(
                     {"id": app_doc["id"], "user_id": uid},
@@ -563,6 +766,12 @@ async def run_reply_scan_cycle(user_id: str | None = None) -> dict:
                     await notify_user(user, "reply_received", {
                         "company": app_doc.get("company", ""), "role": app_doc.get("job_title", ""),
                         "summary": classification.get("summary", "")})
+            elif category == "auto_response":
+                await add_event(
+                    uid, app_doc["id"], "auto_response",
+                    f"Auto response: {classification.get('summary', '')}",
+                    {"from": msg.get("from", ""), "subject": msg.get("subject", ""), "category": "auto_response"},
+                )
         if new_processed:
             await db.reply_scan_state.update_one(
                 {"user_id": uid},

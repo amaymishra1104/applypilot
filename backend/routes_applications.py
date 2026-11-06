@@ -1,4 +1,6 @@
+import asyncio
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -281,8 +283,24 @@ async def edit_application(app_id: str, body: ApplicationEdit, user: dict = Depe
     return await db.job_applications.find_one({"id": app_id, "user_id": user["user_id"]}, {"_id": 0})
 
 
+_send_rate_lock = asyncio.Lock()
+_send_timestamps: list[float] = []
+MAX_MANUAL_SENDS_PER_MINUTE = 15
+
+
+async def check_send_rate_limit() -> None:
+    now = time.time()
+    async with _send_rate_lock:
+        global _send_timestamps
+        _send_timestamps = [t for t in _send_timestamps if now - t < 60]
+        if len(_send_timestamps) >= MAX_MANUAL_SENDS_PER_MINUTE:
+            raise HTTPException(status_code=429, detail="Too many send requests. Please wait a moment.")
+        _send_timestamps.append(now)
+
+
 @router.post("/applications/{app_id}/send")
-async def send_now(app_id: str, user: dict = Depends(get_current_user)):
+async def send_now(app_id: str, force_send: bool = False, user: dict = Depends(get_current_user)):
+    await check_send_rate_limit()
     uid = user["user_id"]
     app_doc = await get_owned("job_applications", app_id, uid)
     if app_doc.get("status") == "sent":
@@ -293,6 +311,8 @@ async def send_now(app_id: str, user: dict = Depends(get_current_user)):
     sent_today = await count_sent_today(uid)
     if sent_today >= int(settings["autopilot"]["max_per_day"]):
         raise HTTPException(status_code=429, detail=f"Daily sending limit reached ({settings['autopilot']['max_per_day']}/day). Raise it in Settings.")
+    if force_send:
+        app_doc["force_send"] = True
     result = await send_application(uid, app_doc, trigger="manual")
     if not result["ok"]:
         raise HTTPException(status_code=400, detail=result["error"])
