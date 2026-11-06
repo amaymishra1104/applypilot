@@ -322,12 +322,12 @@ export default function RoleProfiles() {
                   <Badge variant="outline">{role.version_count} {role.version_count === 1 ? "version" : "versions"}</Badge>
                 </div>
                 {role.description && <p className="line-clamp-2 text-sm text-muted-foreground">{role.description}</p>}
-                {!!role.skills.length && (
+                {!!(role.skills && role.skills.length) && (
                   <div className="flex flex-wrap gap-1.5" data-testid="role-card-skills">
-                    {role.skills.slice(0, 6).map((s) => (
+                    {(role.skills || []).slice(0, 6).map((s) => (
                       <Badge key={s} variant="secondary" className="text-xs font-normal">{s}</Badge>
                     ))}
-                    {role.skills.length > 6 && <Badge variant="secondary" className="text-xs font-normal">+{role.skills.length - 6}</Badge>}
+                    {(role.skills || []).length > 6 && <Badge variant="secondary" className="text-xs font-normal">+{(role.skills || []).length - 6}</Badge>}
                   </div>
                 )}
                 <div className="mt-auto rounded-lg border bg-muted/40 p-3" data-testid="role-card-active-resume">

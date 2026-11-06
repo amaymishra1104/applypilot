@@ -48,7 +48,8 @@ async def role_payload(user_id: str, profile: dict) -> dict:
         {"user_id": user_id, "role_profile_id": profile["id"], "is_deleted": {"$ne": True}}, {"_id": 0},
     ).sort("version_no", -1).to_list(100)
     active = next((clean_version(v) for v in versions if v.get("active")), None)
-    payload = {**profile, "active_resume": active, "version_count": len(versions)}
+    skills = profile.get("skills") or profile.get("target_keywords") or []
+    payload = {**profile, "skills": skills, "active_resume": active, "version_count": len(versions)}
     if active and active.get("reupload_required"):
         payload["reupload_required"] = True
         payload["reupload_warning"] = "Active resume file is missing from storage; re-upload required"

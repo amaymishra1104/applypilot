@@ -54,7 +54,7 @@ async def start_flow(user_id: str, redirect_uri: str, frontend_origin: str) -> s
         "user_id": user_id,
         "redirect_uri": redirect_uri,
         "origin": frontend_origin,
-        "code_verifier": getattr(flow, "code_verifier", None),
+        "code_verifier": flow.code_verifier if isinstance(getattr(flow, "code_verifier", None), str) else None,
         "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
     })
     return url

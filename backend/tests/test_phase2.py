@@ -36,6 +36,7 @@ async def cleanup_db():
         db.app_settings,
         db.bulk_jobs,
         db.application_events,
+        db.gmail_connections,
     ):
         await col.delete_many({"user_id": test_uid})
     yield test_uid
@@ -49,6 +50,7 @@ async def cleanup_db():
         db.app_settings,
         db.bulk_jobs,
         db.application_events,
+        db.gmail_connections,
     ):
         await col.delete_many({"user_id": test_uid})
 
@@ -461,9 +463,11 @@ async def test_dry_run_simulation_mode(cleanup_db, monkeypatch):
     monkeypatch.setenv("DRY_RUN", "true")
     assert application_engine.is_dry_run() is True
 
-    await db.gmail_connections.insert_one({
-        "user_id": uid, "email": "user@gmail.com", "status": "connected",
-    })
+    await db.gmail_connections.update_one(
+        {"user_id": uid},
+        {"$set": {"email": "user@gmail.com", "status": "connected"}},
+        upsert=True,
+    )
     app_doc = {
         "id": "app_dry_run_test",
         "user_id": uid,
